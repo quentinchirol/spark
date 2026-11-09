@@ -80,3 +80,14 @@ def test_json_invalide(brut):
     with pytest.raises(ContratInvalide):
         valider(brut)
 
+
+def test_le_json_schema_decrit_le_meme_contrat():
+    """contrats/ecriture.schema.json (pour l'application) et lakehouse/contrat.py restent alignés."""
+    from pathlib import Path
+
+    from lakehouse.contrat import OPERATIONS
+
+    schema = json.loads((Path(__file__).resolve().parents[3] / "contrats" / "ecriture.schema.json").read_text())
+    assert set(schema["properties"]) == {"id", "op", "table", "date_creation", "donnees"}
+    assert tuple(schema["properties"]["op"]["enum"]) == OPERATIONS
+    assert schema["additionalProperties"] is False

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/quentinchirol/spark/contrats/ecriture.schema.json",
+  "title": "Écriture application → lakehouse (topic Kafka « app », clé = id)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "op", "table", "date_creation"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "UUID généré par le front pour un INSERT, réutilisé ensuite" },
+    "op": { "enum": ["INSERT", "UPDATE", "DELETE"] },
+    "table": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,62}$" },
+    "date_creation": { "type": "string", "format": "date", "description": "Date de création de la ligne, identique dans tous ses messages" },
+    "donnees": {
+      "type": ["object", "null"],
+      "description": "Ligne complète après l'action (jamais un incrément) ; vide pour un DELETE"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "op": { "enum": ["INSERT", "UPDATE"] } } },
+      "then": { "required": ["donnees"], "properties": { "donnees": { "type": "object", "minProperties": 1 } } }
+    },
+    {
+      "if": { "properties": { "op": { "const": "DELETE" } } },
+      "then": { "properties": { "donnees": { "maxProperties": 0 } } }
+    }
+  ]
+}
