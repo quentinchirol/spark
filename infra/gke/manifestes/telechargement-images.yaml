@@ -1,0 +1,39 @@
+# En local (kind), les images sont chargées sur le nœud : imagePullPolicy Never.
+# Sur GKE, elles viennent du registre. Always : une étiquette mobile (develop) est
+# toujours relue ; seules les couches modifiées sont téléchargées.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark
+  namespace: spark
+imagePullSecrets:
+  - name: ghcr-pull
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-connect
+  namespace: spark
+spec:
+  template:
+    spec:
+      containers:
+        - name: spark-connect
+          imagePullPolicy: Always
+          env:
+            - name: SPARK_EXECUTOR_PULL_POLICY
+              value: Always
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pipeline-dashboard
+  namespace: spark
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: pipeline
+              imagePullPolicy: Always
