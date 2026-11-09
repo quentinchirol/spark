@@ -1,0 +1,64 @@
+# Déploiement complet : kubectl apply -k k8s
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: spark
+resources:
+  - commun/namespace.yaml
+  - commun/rbac.yaml
+  - stockage/seaweedfs.yaml
+  - stockage/iceberg-rest.yaml
+  - spark-connect/deployment.yaml
+  - trino/deployment.yaml
+  - pipeline/cronjob.yaml
+configMapGenerator:
+  - name: spark-conf
+    files:
+      - spark-connect/spark-defaults.conf
+      - spark-connect/fairscheduler.xml
+  - name: trino-conf
+    files:
+      - trino/config.properties
+      - trino/password-authenticator.properties
+      - trino/access-control.properties
+      - trino/resource-groups.properties
+      - trino/jvm.config
+  - name: trino-rules
+    files:
+      - trino/rules.json
+      - trino/resource-groups.json
+  - name: trino-catalog
+    files:
+      - trino/catalog/lake.properties
+secretGenerator:
+  # une ligne "utilisateur=token" par personne (fichier non versionné), utilisée par Spark Connect et Trino
+  - name: spark-connect-tokens
+    files:
+      - tokens=secrets/tokens
+    options:
+      # nom fixe : une mise à jour des tokens est rechargée à chaud, sans redémarrer le serveur
+      disableNameSuffixHash: true
+  # identifiants du stockage S3 (fichier non versionné)
+  - name: s3-credentials
+    envs:
+      - secrets/s3.env
+    options:
+      # nom fixe : référencé par les pods executors créés par Spark
+      disableNameSuffixHash: true
+  # clé S3 en lecture seule pour Trino (fichier non versionné)
+  - name: s3-trino
+    envs:
+      - secrets/s3-trino.env
+    options:
+      disableNameSuffixHash: true
+  # token du traitement planifié (même valeur que la ligne pipeline=… de secrets/tokens)
+  - name: pipeline-token
+    envs:
+      - secrets/pipeline.env
+  # secret partagé interne à Trino (fichier non versionné)
+  - name: trino-secrets
+    envs:
+      - secrets/trino.env
+  # certificat HTTPS de Trino : clé + certificat (fichiers non versionnés ; trino-cert.pem pour les clients)
+  - name: trino-tls
+    files:
+      - secrets/trino-tls.pem

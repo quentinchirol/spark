@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::FutureWarning"]
+# les tests à gros volume ne tournent qu'avec : pytest -m gros_volume
+addopts = "-m 'not gros_volume'"
+markers = ["gros_volume: tests sur les tables du benchmark (lents), comparaison mémoire / Iceberg"]

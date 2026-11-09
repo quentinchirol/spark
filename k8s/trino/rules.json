@@ -1,0 +1,15 @@
+{
+  "catalogs": [
+    {"catalog": "lake", "allow": "read-only"},
+    {"catalog": "system", "allow": "read-only"}
+  ],
+  "schemas": [
+    {"owner": false}
+  ],
+  "tables": [
+    {"privileges": ["SELECT"]}
+  ],
+  "queries": [
+    {"allow": ["execute"]}
+  ]
+}

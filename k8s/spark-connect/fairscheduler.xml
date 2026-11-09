@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- Les requêtes simultanées se partagent les executors au lieu de passer l'une après l'autre -->
+<allocations>
+  <pool name="default">
+    <schedulingMode>FAIR</schedulingMode>
+    <weight>1</weight>
+    <minShare>0</minShare>
+  </pool>
+</allocations>

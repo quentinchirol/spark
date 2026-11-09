@@ -1,0 +1,129 @@
+# Trino : moteur SQL interactif sur les mêmes tables Iceberg que Spark (DBeaver, dashboards).
+# Chaque personne se connecte avec son nom et son token personnel (k8s/secrets/tokens) ;
+# les droits sont définis par utilisateur dans rules.json.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino
+  namespace: spark
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        # tokens "utilisateur=token" -> fichier de mots de passe Trino "utilisateur:bcrypt(token)"
+        # (un changement de token est pris en compte au redémarrage de Trino)
+        - name: mots-de-passe
+          image: httpd:2.4-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              grep -v '^#' /tokens/tokens | grep '=' | while IFS='=' read -r utilisateur token; do
+                htpasswd -nbB -C 10 "$utilisateur" "$token" | grep .
+              done > /auth/password.db
+              echo "$(wc -l < /auth/password.db) utilisateur(s)"
+          volumeMounts:
+            - name: tokens
+              mountPath: /tokens
+              readOnly: true
+            - name: auth
+              mountPath: /auth
+      containers:
+        - name: trino
+          image: trinodb/trino:484
+          envFrom:
+            - secretRef:
+                name: s3-trino         # clé S3 en lecture seule (TRINO_S3_ACCESS_KEY / TRINO_S3_SECRET_KEY)
+            - secretRef:
+                name: trino-secrets    # TRINO_SHARED_SECRET
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /v1/info
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/trino/config.properties
+              subPath: config.properties
+            - name: conf
+              mountPath: /etc/trino/password-authenticator.properties
+              subPath: password-authenticator.properties
+            - name: conf
+              mountPath: /etc/trino/access-control.properties
+              subPath: access-control.properties
+            - name: conf
+              mountPath: /etc/trino/resource-groups.properties
+              subPath: resource-groups.properties
+            # tas Java fixé à 1g + 256m hors tas (au lieu de 80 % du conteneur, valeur de l'image) : il faut laisser
+            # de la place à la JVM elle-même, sinon le pod dépasse 2 Gi et il est tué (OOM)
+            - name: conf
+              mountPath: /etc/trino/jvm.config
+              subPath: jvm.config
+            - name: rules
+              mountPath: /etc/trino/rules
+            - name: catalog
+              mountPath: /etc/trino/catalog
+            - name: auth
+              mountPath: /etc/trino/auth
+              readOnly: true
+            - name: tls
+              mountPath: /etc/trino/tls
+              readOnly: true
+      volumes:
+        - name: conf
+          configMap:
+            name: trino-conf
+        - name: rules
+          configMap:
+            name: trino-rules   # monté comme dossier : une modification est relue sans redémarrage
+        - name: catalog
+          configMap:
+            name: trino-catalog
+        - name: auth
+          emptyDir: {}
+        - name: tokens
+          secret:
+            secretName: spark-connect-tokens
+            defaultMode: 0440
+        - name: tls
+          secret:
+            secretName: trino-tls
+            defaultMode: 0440
+---
+# Point d'entrée des clients : https://localhost:8443 avec Docker Desktop
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino
+  namespace: spark
+spec:
+  type: LoadBalancer
+  selector:
+    app: trino
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https

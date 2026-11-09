@@ -1,0 +1,55 @@
+# Traitement planifié : chaque heure, Spark recalcule les tables agrégées lake.dashboard.*
+# (lues ensuite par Trino). Identité "pipeline" : visible comme telle dans le journal AUDIT.
+# Lancer à la main : kubectl -n spark create job --from=cronjob/pipeline-dashboard pipeline-manuel
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pipeline-dashboard
+  namespace: spark
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid          # pas deux calculs en même temps
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false   # pas de variables SERVICE_* injectées (TRINO_PORT=tcp://...)
+          securityContext:
+            runAsUser: 1000
+          initContainers:
+            # Relais localhost:15002 -> spark-connect:15002. Le client Python n'envoie un token
+            # sans TLS qu'à "localhost" ; ce relais tourne dans le même pod (réseau partagé) et
+            # s'arrête avec lui (sidecar natif : restartPolicy Always).
+            - name: relais-spark-connect
+              image: alpine/socat:1.8.0.3
+              restartPolicy: Always
+              args: ["TCP-LISTEN:15002,fork,reuseaddr,bind=127.0.0.1", "TCP:spark-connect:15002"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+          containers:
+            - name: pipeline
+              image: lakehouse-pipeline:1.0
+              imagePullPolicy: Never    # image construite localement (python/Dockerfile)
+              env:
+                - name: SPARK_CONNECT_URL
+                  value: sc://localhost:15002
+                - name: PIPELINE_SOURCE
+                  value: lake.bench_1000000
+                - name: PIPELINE_CIBLE
+                  value: lake.dashboard
+              envFrom:
+                - secretRef:
+                    name: pipeline-token   # SPARK_CONNECT_TOKEN de l'utilisateur "pipeline"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 512Mi

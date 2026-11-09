@@ -1,0 +1,98 @@
+# Serveur Spark Connect : driver unique et permanent, partagé par tous les utilisateurs.
+# Il crée les pods executors à la demande (dynamic allocation).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-connect
+  namespace: spark
+spec:
+  replicas: 1          # un serveur Spark Connect ne se réplique pas (sessions en mémoire)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: spark-connect
+  template:
+    metadata:
+      labels:
+        app: spark-connect
+    spec:
+      serviceAccountName: spark
+      securityContext:
+        runAsUser: 185
+        fsGroup: 185
+      containers:
+        - name: spark-connect
+          image: spark-lakehouse:4.1.3
+          imagePullPolicy: Never      # image construite localement (image/Dockerfile)
+          command: ["bash", "-c"]
+          args:
+            - |
+              cp /opt/spark/conf-template/* "$SPARK_CONF_DIR/"
+              echo "spark.driver.host                $POD_IP" >> "$SPARK_CONF_DIR/spark-defaults.conf"
+              echo "spark.kubernetes.driver.pod.name $POD_NAME" >> "$SPARK_CONF_DIR/spark-defaults.conf"
+              exec /opt/spark/sbin/start-connect-server.sh
+          env:
+            - name: SPARK_NO_DAEMONIZE
+              value: "true"
+            - name: SPARK_CONF_DIR
+              value: /opt/spark/conf-k8s
+            - name: SPARK_CONNECT_TOKENS_FILE
+              value: /etc/spark-connect/tokens
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          envFrom:
+            - secretRef:
+                name: s3-credentials   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY pour Iceberg
+          ports:
+            - name: connect
+              containerPort: 15002
+            - name: spark-ui
+              containerPort: 4040
+          readinessProbe:
+            tcpSocket:
+              port: connect
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2560Mi
+          volumeMounts:
+            - name: spark-conf-template
+              mountPath: /opt/spark/conf-template
+            - name: spark-conf
+              mountPath: /opt/spark/conf-k8s
+            - name: tokens
+              mountPath: /etc/spark-connect
+              readOnly: true
+      volumes:
+        - name: spark-conf-template
+          configMap:
+            name: spark-conf
+        - name: spark-conf
+          emptyDir: {}
+        - name: tokens
+          secret:
+            secretName: spark-connect-tokens
+            defaultMode: 0440
+---
+# Point d'entrée des clients : sc://localhost:15002 avec Docker Desktop
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-connect
+  namespace: spark
+spec:
+  type: LoadBalancer
+  selector:
+    app: spark-connect
+  ports:
+    - name: connect
+      port: 15002
+      targetPort: connect
