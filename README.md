@@ -138,20 +138,28 @@ Arrêter : `docker compose -f compose/docker-compose.yml down`
 docker build -t spark-lakehouse:4.1.3 image
 docker build -t lakehouse-pipeline:1.0 python
 
-# secrets, une seule fois (k8s/secrets/ n'est pas versionné)
-cd k8s/secrets
-printf 'TRINO_S3_ACCESS_KEY=trino%s\nTRINO_S3_SECRET_KEY=%s\n' "$(openssl rand -hex 6)" "$(openssl rand -hex 24)" > s3-trino.env
-T=$(openssl rand -hex 32); echo "pipeline=$T" >> tokens; echo "SPARK_CONNECT_TOKEN=$T" > pipeline.env
-echo "TRINO_SHARED_SECRET=$(openssl rand -hex 32)" > trino.env
-openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=localhost"   -addext "subjectAltName=DNS:localhost,DNS:trino,DNS:trino.spark.svc,IP:127.0.0.1"   -keyout trino-key.pem -out trino-cert.pem
-cat trino-key.pem trino-cert.pem > trino-tls.pem && rm trino-key.pem
-cd ../..
+# secrets locaux (k8s/secrets/ n'est jamais versionné) : crée seulement les fichiers manquants
+scripts/generer-secrets.sh
 
 kubectl apply -k k8s
 ```
 
 Les tables Iceberg et le catalogue sont sur des volumes persistants : ils survivent aux
 redémarrages des pods (mais pas à `kubectl delete -k k8s`, qui supprime les volumes).
+
+## Secrets et rotation
+
+Les secrets (tokens, clés S3, certificat Trino) vivent uniquement dans `k8s/secrets/`, exclu de Git.
+La CI échoue si un fichier de ce dossier est versionné ou si une clé est détectée dans le dépôt (gitleaks).
+
+```bash
+scripts/generer-secrets.sh --rotation        # régénère tous les secrets
+kubectl apply -k k8s
+kubectl -n spark rollout restart deploy/seaweedfs deploy/trino deploy/spark-connect
+```
+
+Après une rotation, les anciennes clés et anciens tokens ne fonctionnent plus : redistribuez les nouveaux
+tokens (`k8s/secrets/tokens`) et le certificat (`k8s/secrets/trino-cert.pem`).
 
 ## Gérer les utilisateurs
 
@@ -164,7 +172,7 @@ bob=<token de 64 caractères hexadécimaux>
 
 Pour ajouter ou révoquer quelqu'un, modifiez ce fichier puis lancez `kubectl apply -k k8s`.
 La modification est prise en compte **à chaud** en 1 min environ, sans redémarrer le serveur
-ni couper les sessions en cours. Pour générer un token : `openssl rand -hex 32`.
+ni couper les sessions en cours. Pour générer un token : `openssl rand -hex 32` (ou `scripts/generer-secrets.sh --rotation` pour tout régénérer).
 
 Trino utilise le même fichier, mais ne le relit qu'à son démarrage :
 `kubectl -n spark rollout restart deploy/trino` après une modification.
