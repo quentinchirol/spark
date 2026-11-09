@@ -1,0 +1,6 @@
+# Cluster local pour le développement (Codespaces, poste avec Docker) : un seul nœud.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lakehouse
+nodes:
+  - role: control-plane
