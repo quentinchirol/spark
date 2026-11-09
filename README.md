@@ -20,6 +20,9 @@ spark/
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
 │   └── secrets/          tokens, clés S3, token pipeline, certificat Trino  (non versionnés)
+├── .github/workflows/    CI : lint, tests unitaires, manifestes, images
+├── .devcontainer/        environnement prêt pour GitHub Codespaces
+├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
 └── python/               tests et benchmark
     ├── lakehouse/        code partagé : connexion, donnees, requetes, requetes_sql, agregats
     ├── tests/            tests pytest
@@ -28,6 +31,29 @@ spark/
     ├── Dockerfile        image lakehouse-pipeline du CronJob
     ├── requirements.txt
     └── resultats/        CSV du benchmark (non versionnés ; archives/ : anciens runs)
+```
+
+---
+
+# Branches, CI et Codespaces
+
+**Branches** : `main` (version stable) ← `develop` (intégration) ← `feature/US-<n>-<story>`.
+Chaque user story est développée sur sa propre branche, puis fusionnée dans `develop` par pull request.
+
+**CI** (`.github/workflows/ci.yml`, à chaque push et pull request) :
+
+| Job          | Vérifie                                                                    |
+|--------------|----------------------------------------------------------------------------|
+| `python`     | lint (`ruff`), compilation, tests unitaires sans cluster (`python/tests/unitaires`) |
+| `manifestes` | chaque `kustomization.yaml` se construit et respecte les schémas Kubernetes (`kubeconform`) |
+| `images`     | les images Docker se construisent                                          |
+
+**Codespaces** : *Code → Codespaces → Create codespace* sur le dépôt (machine 4 cœurs / 16 Go minimum).
+Python, Java 21, Docker, kubectl, Helm et kind sont installés. Pour lancer toute la stack :
+
+```bash
+scripts/dev/demarrer-kind.sh     # crée le cluster kind, construit et charge les images, déploie
+scripts/dev/arreter-kind.sh      # supprime le cluster
 ```
 
 ---
