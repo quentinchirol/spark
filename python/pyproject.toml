@@ -5,3 +5,11 @@ filterwarnings = ["ignore::FutureWarning"]
 # les tests à gros volume ne tournent qu'avec : pytest -m gros_volume
 addopts = "-m 'not gros_volume'"
 markers = ["gros_volume: tests sur les tables du benchmark (lents), comparaison mémoire / Iceberg"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# règles de base (erreurs et style PEP 8) ; les requêtes SQL longues et les noms courts existants sont tolérés
+select = ["E", "F"]
+ignore = ["E501", "E741"]

@@ -1,0 +1,101 @@
+# Intégration continue : à chaque push et à chaque pull request vers develop ou main.
+#   - python      : lint (ruff), compilation, tests unitaires (sans cluster)
+#   - manifestes  : kustomize build + validation des schémas Kubernetes (kubeconform)
+#   - images      : construction des images Docker (sans publication)
+# Les tests d'intégration (cluster complet) tournent dans le workflow « integration ».
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "feature/**"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python · lint et tests unitaires
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python/requirements*.txt
+      - name: Dépendances
+        run: pip install -r requirements.txt ruff
+      - name: Lint
+        run: ruff check .
+      - name: Compilation
+        run: python -m compileall -q .
+      - name: Tests unitaires (sans cluster)
+        run: |
+          if [ -d tests/unitaires ]; then
+            pytest tests/unitaires -q
+          else
+            echo "Pas encore de tests unitaires"
+          fi
+
+  manifestes:
+    name: Manifestes Kubernetes
+    runs-on: ubuntu-latest
+    env:
+      KUBECONFORM_VERSION: v0.6.7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secrets factices (les vrais ne sont jamais versionnés)
+        run: |
+          if [ -x scripts/generer-secrets.sh ]; then
+            scripts/generer-secrets.sh --si-absents
+          fi
+      - name: Installer kubeconform
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+      - name: Construire et valider chaque kustomization
+        run: |
+          set -euo pipefail
+          for k in $(find k8s -name kustomization.yaml -not -path '*/composants/*' | sort); do
+            dossier=$(dirname "$k")
+            echo "::group::$dossier"
+            kubectl kustomize "$dossier" > /tmp/rendu.yaml
+            kubeconform -strict -summary -ignore-missing-schemas \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+              /tmp/rendu.yaml
+            echo "::endgroup::"
+          done
+
+  images:
+    name: Image ${{ matrix.nom }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - nom: spark-lakehouse
+            contexte: image
+          - nom: lakehouse-pipeline
+            contexte: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Construire
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.contexte }}
+          push: false
+          tags: ${{ matrix.nom }}:ci
+          cache-from: type=gha,scope=${{ matrix.nom }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.nom }}
