@@ -20,6 +20,8 @@ spark/
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
 │   └── secrets/          tokens, clés S3, token pipeline, certificat Trino  (non versionnés)
+├── contrats/             contrat d'écriture application → lakehouse (JSON Schema)
+├── docs/                 documentation (contrat-ecriture.md…)
 ├── .github/workflows/    CI : lint, tests unitaires, manifestes, images
 ├── .devcontainer/        environnement prêt pour GitHub Codespaces
 ├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
