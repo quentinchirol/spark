@@ -48,6 +48,27 @@ jobs:
             echo "Pas encore de tests unitaires"
           fi
 
+  secrets:
+    name: Aucun secret versionné
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.24.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rien dans k8s/secrets à part le README
+        run: |
+          fichiers=$(git ls-files k8s/secrets | grep -vx 'k8s/secrets/README.md' || true)
+          if [ -n "$fichiers" ]; then
+            echo "::error::Fichiers secrets versionnés (utiliser scripts/generer-secrets.sh) :"
+            echo "$fichiers"
+            exit 1
+          fi
+      - name: Aucune clé ni aucun token dans les fichiers (gitleaks)
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks dir . --redact --no-banner --exit-code 1
+
   manifestes:
     name: Manifestes Kubernetes
     runs-on: ubuntu-latest

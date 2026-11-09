@@ -1,0 +1,22 @@
+# --- Secrets locaux : JAMAIS versionnés -------------------------------------------------------
+# Générés par scripts/generer-secrets.sh. La CI échoue si un fichier de ce dossier est versionné.
+k8s/secrets/*
+!k8s/secrets/README.md
+
+# --- Python ----------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# --- Résultats du benchmark ------------------------------------------------------------------
+# Les runs courants restent locaux ; archives/ et optimisation/ sont gardés volontairement.
+python/resultats/*.csv
+
+# --- Docker Compose --------------------------------------------------------------------------
+compose/data/
+
+# --- Divers ----------------------------------------------------------------------------------
+.DS_Store
+.idea/
