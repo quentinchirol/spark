@@ -21,5 +21,11 @@ images:
   - name: postgres-lake
     newName: ghcr.io/quentinchirol/postgres-lake
     newTag: develop
+  - name: lakehouse-ecrivain
+    newName: ghcr.io/quentinchirol/lakehouse-ecrivain
+    newTag: develop
+  - name: lakehouse-passerelle
+    newName: ghcr.io/quentinchirol/lakehouse-passerelle
+    newTag: develop
 patches:
   - path: telechargement-images.yaml

@@ -24,6 +24,30 @@ spec:
             - name: SPARK_EXECUTOR_PULL_POLICY
               value: Always
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecrivain
+  namespace: spark
+spec:
+  template:
+    spec:
+      containers:
+        - name: ecrivain
+          imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: passerelle
+  namespace: spark
+spec:
+  template:
+    spec:
+      containers:
+        - name: passerelle
+          imagePullPolicy: Always
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:

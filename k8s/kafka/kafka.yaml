@@ -1,0 +1,66 @@
+# File d'attente des écritures : Kafka 4.1 (KRaft, sans ZooKeeper), géré par Strimzi (k8s/operateurs/strimzi).
+# 3 nœuds, chacun contrôleur + broker, un par zone de préférence (rack = zone : les 3 copies d'une partition
+# sont placées dans 3 zones différentes).
+# Une écriture acceptée (acks=all) est sur au moins 2 nœuds (min.insync.replicas = 2) : la perte d'un nœud
+# ou d'une zone ne perd rien et n'arrête pas les écritures.
+# Accès dans le cluster : lakehouse-kafka-bootstrap:9092
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: noeuds
+  labels:
+    strimzi.io/cluster: lakehouse
+spec:
+  replicas: 3
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 20Gi
+        deleteClaim: false
+        kraftMetadata: shared
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  template:
+    pod:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              strimzi.io/pool-name: noeuds
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: lakehouse
+  # Strimzi 0.50 : KRaft et node pools par défaut (plus d'annotations nécessaires)
+spec:
+  kafka:
+    version: 4.1.1
+    rack:
+      topologyKey: topology.kubernetes.io/zone
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      # un topic n'est jamais créé par erreur par un client : tous sont déclarés (topics.yaml)
+      auto.create.topics.enable: false
+  entityOperator:
+    topicOperator: {}

@@ -13,6 +13,14 @@ resources:
   # PostgreSQL principal (nécessite k8s/operateurs appliqué avant)
   - postgres/principal.yaml
   - postgres/schema.yaml
+  # Kafka (nécessite k8s/operateurs) : file d'attente des écritures de l'application
+  - kafka/kafka.yaml
+  - kafka/topics.yaml
+  # writers Kafka → PostgreSQL, autoscalés par KEDA
+  - ecrivain/deployment.yaml
+  - ecrivain/scaledobject.yaml
+  # passerelle d'écriture de référence (HTTP → Kafka)
+  - passerelle/deployment.yaml
 # images désignées dans des variables d'environnement (image des executors Spark)
 configurations:
   - config-kustomize/images-env.yaml

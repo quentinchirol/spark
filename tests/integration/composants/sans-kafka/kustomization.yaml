@@ -1,0 +1,74 @@
+# Retire Kafka (cluster, nœuds, topics) les writers et la passerelle d'un overlay de test qui ne les teste pas.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: Kafka
+      metadata:
+        name: lakehouse
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaNodePool
+      metadata:
+        name: noeuds
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: app
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: events
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: app-rejets
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ecrivain
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata:
+        name: ecrivain
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: passerelle
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: passerelle
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: passerelle
+        namespace: spark

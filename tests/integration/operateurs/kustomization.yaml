@@ -1,0 +1,14 @@
+# Opérateurs pour la CI : ceux de k8s/operateurs, avec des DEMANDES de CPU et de mémoire minimales (les limites ne
+# changent pas) pour tenir sur un runner GitHub à 2 cœurs à côté des composants testés.
+#   kubectl apply --server-side -k tests/integration/operateurs
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../k8s/operateurs
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 10m, memory: 128Mi}

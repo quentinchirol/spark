@@ -1,0 +1,32 @@
+# Opérateur Zalando postgres-operator v2.0.1 : fichiers officiels (LISEZMOI.md) + réglages par patch.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: spark
+resources:
+  - postgresql.crd.yaml
+  - operatorconfiguration.crd.yaml
+  - postgresteam.crd.yaml
+  - configmap.yaml
+  - operator-service-account-rbac.yaml
+  - postgres-operator.yaml
+  - api-service.yaml
+patches:
+  - target:
+      kind: ConfigMap
+      name: postgres-operator
+    patch: |-
+      # les 3 instances PostgreSQL de préférence dans 3 zones différentes (préférence : un cluster kind
+      # à 1 nœud reste utilisable)
+      - op: replace
+        path: /data/enable_pod_antiaffinity
+        value: "true"
+      - op: replace
+        path: /data/pod_antiaffinity_preferred_during_scheduling
+        value: "true"
+      - op: replace
+        path: /data/pod_antiaffinity_topology_key
+        value: topology.kubernetes.io/zone
+      # droits d'écriture du volume de données pour l'utilisateur postgres de Spilo
+      - op: add
+        path: /data/spilo_fsgroup
+        value: "103"

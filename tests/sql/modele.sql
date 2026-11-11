@@ -57,13 +57,32 @@ DO $$ BEGIN
     ASSERT NOT EXISTS (SELECT 1 FROM vue.commandes WHERE statut = 'zombie'), '5. rejeu ancien ressuscité par la fusion';
 END $$;
 
--- 6. historique : chaque écriture reçue, chaude ou fusionnée
+-- 6. historique : chaque écriture reçue, chaude ou fusionnée. (id, version) identifie un message Kafka : les
+--    « versions anciennes » reçues plus haut (2 deux fois) sont des rejeux du message de version 2, comptés une fois.
+--    Pour alice : versions 1, 2, 3, 6.
 DO $$ BEGIN
-    ASSERT (SELECT count(*) FROM vue.commandes_historique WHERE id = '11111111-1111-4111-8111-111111111111') = 6,
+    ASSERT (SELECT count(*) FROM vue.commandes_historique WHERE id = '11111111-1111-4111-8111-111111111111') = 4,
         '6. historique incomplet';
     ASSERT (SELECT count(*) FROM chaud.commandes_historique) = 0, '6. historique non fusionné';
 END $$;
 
--- 7. fusion de toutes les tables (procédure lancée par pg_cron)
+-- 7. lot rejoué par Kafka (writer arrêté entre l'écriture et le commit de l'offset) : rien n'est enregistré deux fois
+\set C '33333333-3333-4333-8333-333333333333'
+SELECT lake.ecrire_lot('commandes', pg_temp.msg(:'C', 'INSERT', 10, '{"client":"chloe","montant":7,"statut":"ouverte"}'));
+SELECT lake.ecrire_lot('commandes', pg_temp.msg(:'C', 'INSERT', 10, '{"client":"chloe","montant":7,"statut":"ouverte"}'));
+DO $$ BEGIN
+    ASSERT (SELECT count(*) FROM vue.commandes WHERE client = 'chloe') = 1, '7. ligne en double après rejeu';
+    ASSERT (SELECT count(*) FROM vue.commandes_historique WHERE id = '33333333-3333-4333-8333-333333333333') = 1,
+        '7. historique en double après rejeu';
+    PERFORM lake.fusionner('commandes');
+END $$;
+SELECT lake.ecrire_lot('commandes', pg_temp.msg(:'C', 'INSERT', 10, '{"client":"chloe","montant":7,"statut":"ouverte"}'));
+DO $$ BEGIN
+    ASSERT (SELECT count(*) FROM vue.commandes WHERE client = 'chloe') = 1, '7. ligne en double après rejeu post-fusion';
+    ASSERT (SELECT count(*) FROM vue.commandes_historique WHERE id = '33333333-3333-4333-8333-333333333333') = 1,
+        '7. historique en double après rejeu post-fusion';
+END $$;
+
+-- 8. fusion de toutes les tables (procédure lancée par pg_cron)
 CALL lake.fusionner_tout();
 \echo 'Modèle chaud + froid : tous les contrôles passent'

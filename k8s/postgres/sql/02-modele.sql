@@ -73,6 +73,9 @@ BEGIN
             _recu     timestamptz NOT NULL DEFAULT clock_timestamp(),
             donnees   jsonb NOT NULL
         )$f$, nom || '_historique');
+    -- un message rejoué par Kafka (writer arrêté entre l'écriture et le commit de l'offset) n'est enregistré qu'une fois
+    EXECUTE format('CREATE UNIQUE INDEX IF NOT EXISTS %I ON chaud.%I (id, _version)',
+                   nom || '_historique_version', nom || '_historique');
     EXECUTE format($f$
         CREATE TABLE IF NOT EXISTS app.%1$I (
             id        uuid NOT NULL,
@@ -104,9 +107,13 @@ BEGIN
 
     EXECUTE format($f$
         CREATE OR REPLACE VIEW vue.%1$I AS
-        SELECT id, _op, _version, _recu, donnees FROM chaud.%1$I
-        UNION ALL
-        SELECT id, _op, _version, _recu, donnees::jsonb FROM app.%1$I$f$, nom || '_historique');
+        SELECT DISTINCT ON (id, _version) id, _op, _version, _recu, donnees
+        FROM (
+            SELECT id, _op, _version, _recu, donnees FROM chaud.%1$I
+            UNION ALL
+            SELECT id, _op, _version, _recu, donnees::jsonb FROM app.%1$I
+        ) changements
+        ORDER BY id, _version, _recu$f$, nom || '_historique');
 END $$;
 
 -- Écrit un lot de messages du contrat d'écriture dans la table chaude et l'historique.
@@ -129,11 +136,14 @@ BEGIN
     WHERE a.attrelid = format('chaud.%I', nom)::regclass AND a.attnum > 0 AND NOT a.attisdropped
       AND a.attname NOT IN ('id', 'date_creation', '_op', '_version', '_recu');
 
-    -- historique : chaque message reçu, même ceux qui ne gagnent pas
+    -- historique : chaque message reçu, même ceux qui ne gagnent pas ; un message rejoué (même id et même
+    -- version) n'est enregistré qu'une fois
     EXECUTE format($f$
         INSERT INTO chaud.%I (id, _op, _version, donnees)
-        SELECT (m->>'id')::uuid, m->>'op', (m->>'version')::bigint, coalesce(m->'donnees', '{}'::jsonb)
-        FROM jsonb_array_elements($1) m$f$, nom || '_historique')
+        SELECT DISTINCT ON ((m->>'id')::uuid, (m->>'version')::bigint)
+               (m->>'id')::uuid, m->>'op', (m->>'version')::bigint, coalesce(m->'donnees', '{}'::jsonb)
+        FROM jsonb_array_elements($1) m
+        ON CONFLICT (id, _version) DO NOTHING$f$, nom || '_historique')
     USING lot;
 
     EXECUTE format($f$

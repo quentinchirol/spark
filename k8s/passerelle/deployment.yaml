@@ -1,0 +1,76 @@
+# Passerelle d'écriture de référence (python/passerelle) : POST /ecritures → Kafka « app », réponse 202.
+# Sans état : 2 pods minimum dans 2 zones, jusqu'à 12 selon le CPU. Sert aux tests de charge
+# (tests/charge/ecritures.js) et de modèle à l'API d'écriture de l'application.
+apiVersion: v1
+kind: Service
+metadata:
+  name: passerelle
+spec:
+  selector:
+    app: passerelle
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: passerelle
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: passerelle
+  template:
+    metadata:
+      labels:
+        app: passerelle
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: passerelle
+      containers:
+        - name: passerelle
+          image: lakehouse-passerelle:1.0
+          imagePullPolicy: Never      # image construite localement (python/passerelle/Dockerfile)
+          env:
+            - name: KAFKA_BOOTSTRAP
+              value: lakehouse-kafka-bootstrap:9092
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /sante
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 500m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: passerelle
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: passerelle
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

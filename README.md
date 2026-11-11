@@ -20,7 +20,7 @@ spark/
 │   ├── stockage/         minio.yaml (S3, 4 pods), polaris.yaml (catalogue, 2 pods + PostgreSQL), polaris-init.py
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
 │   ├── postgres/         PostgreSQL principal (3 instances synchrones) + sql/ : modèle chaud + froid
-│   ├── operateurs/       opérateur Zalando postgres-operator : kubectl apply --server-side -k k8s/operateurs (avant k8s/)
+│   ├── operateurs/       opérateurs Zalando (PostgreSQL), Strimzi (Kafka), KEDA : kubectl apply --server-side -k k8s/operateurs (avant k8s/)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
 │   ├── config-kustomize/ images désignées dans des variables (image des executors)
 │   └── secrets/          tokens, clés S3, token pipeline, certificat Trino  (non versionnés)
@@ -33,6 +33,8 @@ spark/
 ├── .devcontainer/        environnement prêt pour GitHub Codespaces
 ├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
 └── python/               tests et benchmark
+    ├── ecrivain/         writers Kafka « app » → PostgreSQL principal (image lakehouse-ecrivain)
+    ├── passerelle/       passerelle d'écriture de référence, FastAPI → Kafka (image lakehouse-passerelle)
     ├── lakehouse/        code partagé : connexion, donnees, requetes, requetes_sql, agregats
     ├── tests/            tests pytest
     ├── benchmark.py      chronométrage cache / iceberg / trino
@@ -157,7 +159,7 @@ scripts/generer-secrets.sh
 
 # opérateurs d'abord : leurs CRD doivent exister avant le reste
 kubectl apply --server-side -k k8s/operateurs
-kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do
+kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/scaledobjects.keda.sh
 kubectl apply -k k8s
 ```
 
@@ -213,6 +215,13 @@ fusionnée dans la table Iceberg `app.<table>`, lue par Spark, Trino et le pool 
 
 Sauvegardé en continu (WAL-G) vers un stockage **hors du cluster**, restaurable à la seconde sur 7 jours :
 [docs/sauvegardes.md](docs/sauvegardes.md).
+
+## Écritures de l'application : passerelle → Kafka → writers
+
+L'application envoie chaque création, modification ou suppression à la passerelle d'écriture (`POST /ecritures`,
+réponse 202 en quelques millisecondes). Le message est conservé dans Kafka (3 nœuds), puis des writers l'écrivent
+par lots dans le PostgreSQL principal ; KEDA ajoute des writers quand le retard monte. Ni perte ni doublon, même si un
+pod tombe. Détails, codes de réponse, messages refusés et test de charge : [docs/ecritures.md](docs/ecritures.md).
 
 ## Stockage et catalogue : MinIO + Polaris
 
