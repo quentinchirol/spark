@@ -24,5 +24,8 @@ images:
   - name: lakehouse-ecrivain
     newName: ghcr.io/quentinchirol/lakehouse-ecrivain
     newTag: develop
+  - name: lakehouse-passerelle
+    newName: ghcr.io/quentinchirol/lakehouse-passerelle
+    newTag: develop
 patches:
   - path: telechargement-images.yaml

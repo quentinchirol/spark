@@ -1,4 +1,4 @@
-# Retire Kafka (cluster, nœuds, topics) et les writers d'un overlay de test qui ne les teste pas.
+# Retire Kafka (cluster, nœuds, topics) les writers et la passerelle d'un overlay de test qui ne les teste pas.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 patches:
@@ -50,4 +50,25 @@ patches:
       kind: ScaledObject
       metadata:
         name: ecrivain
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: passerelle
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: passerelle
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: passerelle
         namespace: spark
