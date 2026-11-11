@@ -23,12 +23,33 @@ Contrat complet : [contrat-ecriture.md](contrat-ecriture.md).
 | 422 | message hors contrat (raison dans la réponse) | corriger, ne pas renvoyer tel quel |
 | 503 | Kafka indisponible ou trop lent | renvoyer **le même message** (même id) après `Retry-After` |
 
+## Actions critiques : confirmées au moment de la validation
+
+Pour une action qui doit être définitive dès la réponse (un paiement…), la table est déclarée **critique** à sa création :
+
+```sql
+SELECT lake.creer_table('paiements', 'client text, montant numeric(12,2)', critique => true);
+```
+
+Elle ne s'écrit alors **que** par `POST /ecritures/critiques` (même message que le contrat d'écriture) :
+
+| Code | Sens |
+|------|------|
+| 201 | **enregistré en base** (après le COMMIT, donc sur 2 instances PostgreSQL), avec la `version` attribuée |
+| 422 | hors contrat, ou table non critique (elle passe par `POST /ecritures`) |
+| 503 | PostgreSQL indisponible ou trop lent : renvoyer le **même** message (même id), sans risque de doublon |
+
+Pas de Kafka ni de writers sur ce chemin : une action critique n'attend jamais derrière la file des écritures normales.
+Un message pour une table critique envoyé sur `POST /ecritures` est mis en rejet (`app-rejets`) : un seul chemin
+d'écriture par table, pour que les numéros de version restent cohérents. Ce chemin est fait pour un faible volume.
+
 ## Messages refusés
 
 Un message qui ne peut pas être écrit n'est jamais jeté en silence : il part dans le topic `app-rejets`, avec la raison
 (en-tête `raison`) et son origine (`origine` = partition:offset). Raisons possibles : contrat non respecté, clé Kafka
 différente de l'id, table inconnue (créer la table avec `lake.creer_table`), données refusées par PostgreSQL (type,
-contrainte). Un message refusé par PostgreSQL est isolé : le reste de son lot est écrit normalement.
+contrainte), table critique (voir ci-dessus). Un message refusé par PostgreSQL est isolé : le reste de son lot est
+écrit normalement.
 
 ```bash
 kubectl -n spark exec lakehouse-noeuds-0 -- bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
@@ -66,5 +87,8 @@ writer, un pod passerelle et un nœud Kafka ; vérifier ensuite `SELECT count(*)
   ligne perdue, aucun doublon, aucune ligne supprimée ressuscitée, historique exact (3 300 sur 3 300) ;
 - KEDA : 1 → 4 writers pendant la rafale, retour à 1 au bout de 21 s de calme ;
 - k6 à 200 écritures/s pendant 30 s : p99 **123 ms**, 0 % d'échec.
+
+- pendant la rafale (file Kafka chargée), 50 actions critiques : chacune lisible en base dès sa réponse, p99 mesuré
+  par le test (voir le journal du workflow Integration) ; une action critique envoyée sur le chemin Kafka finit en rejet.
 
 **Le débit de 10 000/s n'a pas encore été mesuré** : il demande le cluster GKE (procédure ci-dessus).

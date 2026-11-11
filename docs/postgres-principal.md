@@ -22,6 +22,13 @@ SELECT lake.creer_table('commandes', 'client text, montant numeric(12,2), statut
 | `chaud.commandes_historique` → `app.commandes_historique` | chaque écriture reçue |
 | `vue.commandes_historique` | tous les changements d'une ligne |
 
+Table d'actions critiques (écrite seulement par `POST /ecritures/critiques`, réponse après le COMMIT) :
+
+```sql
+SELECT lake.creer_table('paiements', 'client text, montant numeric(12,2)', critique => true);
+SELECT lake.ecrire_critique('paiements', '{"id": "…", "op": "INSERT", "table": "paiements", …}');  -- renvoie la version
+```
+
 ## Écrire (writer Kafka, US-6)
 
 ```sql
