@@ -211,6 +211,9 @@ pg_lake. L'application lit `vue.<table>` (dernier état, visible tout de suite) 
 fusionnée dans la table Iceberg `app.<table>`, lue par Spark, Trino et le pool analytique. Détails :
 [docs/postgres-principal.md](docs/postgres-principal.md).
 
+Sauvegardé en continu (WAL-G) vers un stockage **hors du cluster**, restaurable à la seconde sur 7 jours :
+[docs/sauvegardes.md](docs/sauvegardes.md).
+
 ## Stockage et catalogue : MinIO + Polaris
 
 - **MinIO** (`http://minio:9000`) : 4 pods, 1 volume chacun, codage d'effacement. Un pod arrêté ne gêne ni la lecture ni
