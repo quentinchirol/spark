@@ -33,6 +33,10 @@ fi
 
 echo "==> Secrets de la plateforme (générés seulement s'ils n'existent pas)"
 scripts/generer-secrets.sh --si-absents
+if ! grep -q '^AWS_ENDPOINT=https://storage.googleapis.com' k8s/secrets/sauvegardes.env; then
+  echo "Sauvegardes PostgreSQL non configurées pour GKE : lancer d'abord PROJET=… infra/gke/creer-sauvegardes.sh" >&2
+  exit 1
+fi
 
 echo "==> Opérateurs (leurs CRD doivent exister avant le reste)"
 kubectl apply --server-side -k k8s/operateurs

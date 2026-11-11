@@ -16,6 +16,8 @@
 #   polaris-spark.env / polaris-trino.env / polaris-postgres.env   identifiants OAuth2 (client:secret)
 #                   de Spark, Trino et du PostgreSQL principal (pg_lake) dans Polaris
 #   polaris-public.pem / polaris-private.pem   clés de signature des jetons Polaris (communes aux 2 pods)
+#   sauvegardes.env clé du stockage objet HORS cluster des sauvegardes PostgreSQL (WAL-G) : MinIO local
+#                   « sauvegardes » (scripts/dev) ; sur GKE, clé HMAC du bucket GCS (infra/gke/creer-sauvegardes.sh)
 #   trino.env       secret interne de Trino
 #   trino-tls.pem   clé privée + certificat HTTPS de Trino ; trino-cert.pem : certificat seul (clients)
 set -euo pipefail
@@ -66,6 +68,14 @@ minio_root_env() {
 polaris_env() {
   printf 'POLARIS_ROOT_CLIENT_ID=root%s\nPOLARIS_ROOT_CLIENT_SECRET=%s\nPOLARIS_DB_PASSWORD=%s\n' "$(hex 4)" "$(hex 24)" "$(hex 24)"
 }
+# destination + clé des sauvegardes : MinIO « sauvegardes » hors de Kubernetes (scripts/dev/sauvegardes.sh) ;
+# sur GKE, infra/gke/creer-sauvegardes.sh remplace ce fichier (bucket GCS + clé HMAC)
+sauvegardes_env() {
+  cle="sauvegarde$(hex 4)"; secret="$(hex 24)"
+  printf 'WAL_S3_BUCKET=lake-sauvegardes\nAWS_ENDPOINT=http://sauvegardes:9000\nCLONE_AWS_ENDPOINT=http://sauvegardes:9000\n'
+  printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nCLONE_AWS_ACCESS_KEY_ID=%s\nCLONE_AWS_SECRET_ACCESS_KEY=%s\n' \
+    "$cle" "$secret" "$cle" "$secret"
+}
 polaris_client_env() {
   printf 'POLARIS_CREDENTIAL=%s:%s\n' "$(hex 8)" "$(hex 24)"
 }
@@ -87,6 +97,7 @@ ecrire polaris.env polaris_env
 ecrire polaris-spark.env polaris_client_env
 ecrire polaris-trino.env polaris_client_env
 ecrire polaris-postgres.env polaris_client_env
+ecrire sauvegardes.env sauvegardes_env
 
 # clés de signature des jetons Polaris : les deux pods doivent partager la même paire
 if [ "$MODE" = "--rotation" ] || [ ! -s polaris-private.pem ] || [ ! -s polaris-public.pem ]; then

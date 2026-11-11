@@ -24,6 +24,9 @@ if [ -x scripts/generer-secrets.sh ]; then
   scripts/generer-secrets.sh --si-absents
 fi
 
+echo "==> Stockage des sauvegardes PostgreSQL, hors de Kubernetes"
+scripts/dev/sauvegardes.sh
+
 echo "==> Opérateurs (leurs CRD doivent exister avant le reste)"
 kubectl apply --server-side -k k8s/operateurs
 kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do --timeout=2m
