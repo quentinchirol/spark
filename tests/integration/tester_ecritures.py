@@ -4,7 +4,9 @@
   2. pendant l'envoi, un writer est tué brutalement (crash) ;
   3. une fois tout absorbé : chaque ligne a exactement son dernier état, aucune n'est perdue ni en double,
      et l'historique contient chaque message accepté une seule fois ;
-  4. le retard a fait ajouter des writers par KEDA, retirés ensuite quand le calme est revenu.
+  4. le retard a fait ajouter des writers par KEDA, retirés ensuite quand le calme est revenu ;
+  5. (US-8) pendant le pic, des actions critiques sont enregistrées en base AVANT leur réponse, sans attendre la file
+     Kafka (p99 < 500 ms) ; une action critique envoyée par erreur sur le chemin Kafka est mise en rejet.
 
     python tests/integration/tester_ecritures.py
 Dépendances : pip install httpx
@@ -20,7 +22,8 @@ import httpx
 
 from commun import kubectl, tunnel, verifier
 
-TABLE, RAFALE, PORT = "commandes", "rafale", 18000
+TABLE, RAFALE, CRITIQUE, PORT = "commandes", "rafale", "paiements", 18000
+NB_CRITIQUES = 50
 NB_LIGNES, NB_MAJ, NB_SUPPR = 1500, 1500, 300
 NB_RAFALE = 60000
 
@@ -128,6 +131,50 @@ async def envoyer(par_id, apres_moitie):
     return acceptes
 
 
+def retard():
+    """Messages en attente du groupe pg-writer sur le topic app (somme des LAG)."""
+    sortie = kubectl("exec", "lakehouse-noeuds-0", "--", "bin/kafka-consumer-groups.sh", "--bootstrap-server",
+                     "localhost:9092", "--describe", "--group", "pg-writer")
+    total = 0
+    for ligne in sortie.splitlines():
+        champs = ligne.split()
+        if len(champs) > 5 and champs[1] == "app" and champs[5].isdigit():
+            total += int(champs[5])
+    return total
+
+
+def nb_rejets():
+    sortie = kubectl("exec", "lakehouse-noeuds-0", "--", "bin/kafka-get-offsets.sh", "--bootstrap-server",
+                     "localhost:9092", "--topic", "app-rejets")
+    return sum(int(ligne.rsplit(":", 1)[1]) for ligne in sortie.splitlines() if ligne.count(":") >= 2)
+
+
+async def actions_critiques():
+    """NB_CRITIQUES actions critiques pendant que la file Kafka est chargée ; renvoie (latences, ids)."""
+    latences, ids = [], []
+    async with httpx.AsyncClient(base_url=f"http://localhost:{PORT}", timeout=10) as client:
+        for n in range(NB_CRITIQUES):
+            id_ = str(uuid.uuid4())
+            corps = {"id": id_, "op": "INSERT", "table": CRITIQUE, "date_creation": "2026-11-11",
+                     "donnees": {"client": "c", "montant": n}}
+            debut = time.monotonic()
+            reponse = await client.post("/ecritures/critiques", json=corps)
+            latences.append(time.monotonic() - debut)
+            if reponse.status_code != 201:
+                print(f"ECHEC action critique {reponse.status_code} : {reponse.text}", flush=True)
+                raise SystemExit(1)
+            if n < 5:   # la réponse n'arrive qu'une fois la ligne enregistrée : elle doit déjà être lisible
+                verifier(sql(f"SELECT count(*) FROM vue.{CRITIQUE} WHERE id = '{id_}'") == "1",
+                         f"action critique {n + 1} déjà en base au moment de la réponse")
+            ids.append(id_)
+        # la même action critique envoyée par erreur sur le chemin Kafka : acceptée (202) puis mise en rejet
+        egaree = {"id": str(uuid.uuid4()), "op": "INSERT", "table": CRITIQUE, "date_creation": "2026-11-11",
+                  "donnees": {"client": "egaree", "montant": 1}}
+        if (await client.post("/ecritures", json=egaree)).status_code != 202:
+            raise SystemExit("ECHEC envoi de l'action égarée")
+    return latences, ids
+
+
 def tuer_un_writer():
     pod = kubectl("get", "pods", "-l", "app=ecrivain", "-o", "name").split()[0]
     kubectl("delete", pod, "--grace-period=0", "--force", "--wait=false")
@@ -137,6 +184,8 @@ def tuer_un_writer():
 def main():
     sql(f"SELECT lake.creer_table('{TABLE}', 'client text, montant numeric(12,2), statut text')")
     sql(f"SELECT lake.creer_table('{RAFALE}', 'n int')")
+    sql(f"SELECT lake.creer_table('{CRITIQUE}', 'client text, montant numeric(12,2)', 'iceberg', true)")
+    rejets_avant = nb_rejets()
     par_id, attendu = plan_ecritures()
     observateur = Observateur()
     observateur.start()
@@ -145,6 +194,18 @@ def main():
     print(f"     rafale de {NB_RAFALE} messages lancée dans le cluster", flush=True)
     passerelle = tunnel("svc/passerelle", PORT, 8000)
     try:
+        # --- actions critiques pendant que la file Kafka est chargée par la rafale (US-8) ---------------------
+        debut = time.monotonic()
+        while retard() < 1000 and time.monotonic() - debut < 90:
+            time.sleep(1)
+        charge = retard()
+        latences, ids_critiques = asyncio.run(actions_critiques())
+        latences.sort()
+        p99 = latences[int(len(latences) * 0.99) - 1]
+        verifier(charge >= 1000, f"file Kafka chargée pendant les actions critiques ({charge} messages en attente)")
+        verifier(p99 < 0.5, f"{NB_CRITIQUES} actions critiques enregistrées pendant le pic : p99 {p99 * 1000:.0f} ms, "
+                            f"médiane {latences[len(latences) // 2] * 1000:.0f} ms (port-forward compris)")
+
         debut = time.monotonic()
         acceptes = asyncio.run(envoyer(par_id, tuer_un_writer))
         duree = time.monotonic() - debut
@@ -174,6 +235,9 @@ def main():
     verifier(not fausses, f"chaque ligne a son dernier état ({len(fausses)} en écart)")
     verifier(not ressuscitees, f"aucune ligne supprimée visible ({len(ressuscitees)})")
     verifier(sql(f"SELECT count(*) - count(DISTINCT id) FROM vue.{TABLE}") == "0", "aucune ligne en double")
+    verifier(sql(f"SELECT count(*) FROM vue.{CRITIQUE}") == str(NB_CRITIQUES),
+             f"actions critiques : {NB_CRITIQUES} en base, l'action égarée sur le chemin Kafka n'y est pas")
+    verifier(nb_rejets() > rejets_avant, "action critique égarée sur le chemin Kafka : mise en rejet (app-rejets)")
     historique = sql(f"SELECT count(*) FROM vue.{TABLE}_historique")
     verifier(historique == str(acceptes), f"historique : chaque message accepté une seule fois ({historique}/{acceptes})")
 

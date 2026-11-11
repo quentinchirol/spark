@@ -5,6 +5,15 @@ GRANT USAGE ON SCHEMA vue TO lake_app;
 GRANT SELECT ON ALL TABLES IN SCHEMA vue TO lake_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA vue GRANT SELECT ON TABLES TO lake_app;
 
+-- Les fonctions sont exécutables par tous (PUBLIC) par défaut : seuls les rôles prévus y ont droit.
+REVOKE ALL ON FUNCTION lake.ecrire_lot(text, jsonb), lake.ecrire_critique(text, jsonb) FROM PUBLIC;
+
+-- Rôle du chemin critique (passerelle, POST /ecritures/critiques) : uniquement lake.ecrire_critique
+-- (SECURITY DEFINER), aucun droit direct sur les tables.
+ALTER ROLE lake_critique SET statement_timeout = '5s';
+GRANT USAGE ON SCHEMA lake TO lake_critique;
+GRANT EXECUTE ON FUNCTION lake.ecrire_critique(text, jsonb) TO lake_critique;
+
 -- Rôle des writers (k8s/ecrivain) : écrit les tables chaudes via lake.ecrire_lot, rien d'autre.
 -- Les tables chaudes créées plus tard par lake.creer_table (en tant que postgres) reçoivent les mêmes droits.
 ALTER ROLE lake_writer SET statement_timeout = '60s';

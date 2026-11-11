@@ -50,6 +50,10 @@ Aucun autre champ n'est accepté. Le schéma est aussi disponible en JSON Schema
 | `422` | message hors contrat (détail des erreurs dans la réponse) | corrige, ne réessaie pas tel quel |
 | `429` / `503` | surcharge ou Kafka momentanément indisponible | réessaie **avec le même `id`** après 1 s, 2 s, 4 s… |
 
+**Actions critiques** (paiement…) : même message, envoyé à `POST /ecritures/critiques` pour une table déclarée critique.
+La réponse `201` n'arrive qu'une fois l'écriture enregistrée en base ; `503` → réessayer avec le même `id`. Détails :
+[ecritures.md](ecritures.md#actions-critiques--confirmées-au-moment-de-la-validation).
+
 ## Exemple côté application (FastAPI)
 
 ```python

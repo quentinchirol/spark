@@ -83,6 +83,39 @@ DO $$ BEGIN
         '7. historique en double après rejeu post-fusion';
 END $$;
 
--- 8. fusion de toutes les tables (procédure lancée par pg_cron)
+-- 8. actions critiques : chemin synchrone (lake.ecrire_critique), versions issues d'une séquence, un seul chemin par table
+SELECT lake.creer_table('paiements', 'client text, montant numeric(12,2)', 'heap', true);
+\set P '66666666-6666-4666-8666-666666666666'
+CREATE FUNCTION pg_temp.paiement(id text, montant numeric) RETURNS jsonb LANGUAGE sql AS $$
+    SELECT jsonb_build_object('id', id, 'op', 'INSERT', 'table', 'paiements', 'date_creation', '2026-11-11',
+                              'donnees', jsonb_build_object('client', 'alice', 'montant', montant)) $$;
+DO $$
+DECLARE v1 bigint; v2 bigint; refus boolean;
+BEGIN
+    v1 := lake.ecrire_critique('paiements', pg_temp.paiement('66666666-6666-4666-8666-666666666666', 99.90));
+    ASSERT (SELECT montant FROM vue.paiements WHERE id = '66666666-6666-4666-8666-666666666666') = 99.90,
+        '8. action critique non lisible juste après';
+    -- renvoi du même message (réponse perdue côté client) : toujours une seule ligne
+    v2 := lake.ecrire_critique('paiements', pg_temp.paiement('66666666-6666-4666-8666-666666666666', 99.90));
+    ASSERT v2 > v1, '8. versions critiques non croissantes';
+    ASSERT (SELECT count(*) FROM vue.paiements) = 1, '8. paiement en double après renvoi';
+    -- une table critique refuse le chemin Kafka (erreur « données » : le writer la met en rejet)
+    refus := false;
+    BEGIN
+        PERFORM lake.ecrire_lot('paiements', jsonb_build_array(pg_temp.paiement(gen_random_uuid()::text, 1)
+                                                               || '{"version": 1}'::jsonb));
+    EXCEPTION WHEN data_exception THEN refus := true;
+    END;
+    ASSERT refus, '8. table critique écrite par le chemin Kafka';
+    -- une table normale refuse le chemin critique
+    refus := false;
+    BEGIN
+        PERFORM lake.ecrire_critique('commandes', pg_temp.paiement(gen_random_uuid()::text, 1));
+    EXCEPTION WHEN data_exception THEN refus := true;
+    END;
+    ASSERT refus, '8. table normale écrite par le chemin critique';
+END $$;
+
+-- 9. fusion de toutes les tables (procédure lancée par pg_cron)
 CALL lake.fusionner_tout();
 \echo 'Modèle chaud + froid : tous les contrôles passent'

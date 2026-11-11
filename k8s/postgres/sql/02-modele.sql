@@ -26,12 +26,20 @@ CREATE TABLE IF NOT EXISTS lake.tables (
     methode    text NOT NULL DEFAULT 'iceberg' CHECK (methode IN ('iceberg', 'heap')),
     creee_le   timestamptz NOT NULL DEFAULT now()
 );
+-- table critique (paiement…) : écrite UNIQUEMENT par le chemin synchrone lake.ecrire_critique (réponse après COMMIT),
+-- jamais par Kafka. Un seul chemin d'écriture par table : les numéros de version restent cohérents.
+ALTER TABLE lake.tables ADD COLUMN IF NOT EXISTS critique boolean NOT NULL DEFAULT false;
+-- versions des écritures critiques (les écritures Kafka utilisent l'offset)
+CREATE SEQUENCE IF NOT EXISTS lake.version_critique;
 
 -- Crée (si absentes) les tables chaude, froide, d'historique et les vues d'une table de l'application.
 --   nom      : nom de la table (même règle que le contrat d'écriture)
 --   colonnes : colonnes métier, ex. 'client text, montant numeric(12,2), statut text'
 --   methode  : 'iceberg' (production) ou 'heap' (tests sans pg_lake)
-CREATE OR REPLACE FUNCTION lake.creer_table(nom text, colonnes text, methode text DEFAULT 'iceberg')
+--   critique : true pour une table d'actions critiques (POST /ecritures/critiques), fixé à la création
+DROP FUNCTION IF EXISTS lake.creer_table(text, text, text);
+CREATE OR REPLACE FUNCTION lake.creer_table(nom text, colonnes text, methode text DEFAULT 'iceberg',
+                                            critique boolean DEFAULT false)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
     stockage text := CASE methode
@@ -42,7 +50,7 @@ DECLARE
         ELSE '' END;
     liste text;
 BEGIN
-    INSERT INTO lake.tables (nom, colonnes, methode) VALUES (nom, colonnes, methode)
+    INSERT INTO lake.tables (nom, colonnes, methode, critique) VALUES (nom, colonnes, methode, critique)
     ON CONFLICT DO NOTHING;
 
     EXECUTE format($f$
@@ -128,6 +136,13 @@ DECLARE
     maj text;
     appliquees bigint;
 BEGIN
+    -- une table critique ne s'écrit que par lake.ecrire_critique (code d'erreur « données » : le writer met le message
+    -- en rejet au lieu de s'arrêter)
+    IF coalesce((SELECT t.critique FROM lake.tables t WHERE t.nom = ecrire_lot.nom), false)
+       AND coalesce(current_setting('lake.chemin_critique', true), '') <> 'on' THEN
+        RAISE EXCEPTION 'table critique % : écrire par POST /ecritures/critiques, pas par Kafka', nom
+              USING ERRCODE = 'data_exception';
+    END IF;
     SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum),
            string_agg('d.' || quote_ident(a.attname), ', ' ORDER BY a.attnum),
            string_agg(format('%1$I = EXCLUDED.%1$I', a.attname), ', ' ORDER BY a.attnum)
@@ -165,6 +180,26 @@ BEGIN
     USING lot;
     GET DIAGNOSTICS appliquees = ROW_COUNT;
     RETURN appliquees;
+END $$;
+
+-- Écrit UNE action critique (un message du contrat) et ne rend la main qu'après l'avoir enregistrée : la réponse à
+-- l'application part après le COMMIT, donc après la copie sur la réplique synchrone. Pas de Kafka, pas de file :
+-- une action critique n'attend jamais derrière les écritures normales. Renvoie la version attribuée.
+-- SECURITY DEFINER : le rôle lake_critique n'a aucun droit sur les tables, seulement l'exécution de cette fonction.
+CREATE OR REPLACE FUNCTION lake.ecrire_critique(nom text, message jsonb)
+RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    version bigint;
+BEGIN
+    IF NOT coalesce((SELECT t.critique FROM lake.tables t WHERE t.nom = ecrire_critique.nom), false) THEN
+        RAISE EXCEPTION 'table % non critique (ou inconnue) : écrire par POST /ecritures (Kafka)', nom
+              USING ERRCODE = 'data_exception';
+    END IF;
+    version := nextval('lake.version_critique');
+    PERFORM set_config('lake.chemin_critique', 'on', true);
+    PERFORM lake.ecrire_lot(nom, jsonb_build_array(message || jsonb_build_object('version', version)));
+    PERFORM set_config('lake.chemin_critique', 'off', true);
+    RETURN version;
 END $$;
 
 -- Déplace vers Iceberg les lignes chaudes reçues avant « coupure ». Une ligne réécrite pendant la fusion

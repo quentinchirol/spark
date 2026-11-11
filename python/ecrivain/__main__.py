@@ -51,8 +51,10 @@ async def ecrire(pool, lot) -> None:
                         lot.rejets.append(Rejet(ligne.message, f"données refusées par PostgreSQL : {erreur}"))
 
 
-async def tables_connues(connexion) -> set[str]:
-    return {ligne["nom"] for ligne in await connexion.fetch("SELECT nom FROM lake.tables")}
+async def tables_connues(connexion) -> tuple[set[str], frozenset[str]]:
+    """(toutes les tables, tables critiques : écrites seulement par le chemin synchrone)."""
+    lignes = await connexion.fetch("SELECT nom, critique FROM lake.tables")
+    return {ligne["nom"] for ligne in lignes}, frozenset(ligne["nom"] for ligne in lignes if ligne["critique"])
 
 
 async def principal() -> None:
@@ -86,7 +88,7 @@ async def principal() -> None:
                 await client.stop()
                 await asyncio.sleep(3)
     async with pool.acquire() as connexion:
-        connues = await tables_connues(connexion)
+        connues, critiques = await tables_connues(connexion)
     total, depuis = 0, time.monotonic()
     try:
         while not arret.is_set():
@@ -96,8 +98,8 @@ async def principal() -> None:
                 continue
             if not tables_citees(messages) <= connues:      # table créée depuis le démarrage ?
                 async with pool.acquire() as connexion:
-                    connues = await tables_connues(connexion)
-            lot = preparer(messages, connues)
+                    connues, critiques = await tables_connues(connexion)
+            lot = preparer(messages, connues, critiques)
 
             await ecrire(pool, lot)
             for rejet in lot.rejets:

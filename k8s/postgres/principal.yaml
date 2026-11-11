@@ -25,6 +25,7 @@ spec:
   users:
     lake_app: []          # rôle de l'application (FastAPI) : lecture des vues uniquement
     lake_writer: []       # rôle des writers (k8s/ecrivain) : lake.ecrire_lot sur les tables chaudes
+    lake_critique: []     # rôle du chemin critique (passerelle) : lake.ecrire_critique uniquement
   databases:
     lake: lake_app
   postgresql:
