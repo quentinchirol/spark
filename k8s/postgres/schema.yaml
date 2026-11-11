@@ -1,0 +1,56 @@
+# Initialise la base « lake » du PostgreSQL principal : extensions, accès à Polaris, modèle chaud + froid,
+# rôle de l'application, fusion planifiée (fichiers sql/, ConfigMap lake-sql). Idempotent : relancé à
+# chaque déploiement (le Job est recréé par infra/gke/deployer.sh).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lake-schema
+spec:
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: schema
+          image: postgres:17-alpine
+          command: ["sh", "-c"]
+          args:
+            - |
+              until pg_isready -q; do echo "lake-principal pas encore prêt"; sleep 3; done
+              set -e
+              identifiant=${POLARIS_CREDENTIAL%%:*}
+              secret=${POLARIS_CREDENTIAL#*:}
+              for f in /sql/*.sql; do
+                echo "==> $f"
+                psql -X -v ON_ERROR_STOP=1 -v polaris_client_id="$identifiant" -v polaris_client_secret="$secret" -f "$f"
+              done
+              echo "Schéma lake prêt"
+          env:
+            - name: PGHOST
+              value: lake-principal          # Service du primaire (écriture), créé par l'opérateur
+            - name: PGDATABASE
+              value: lake
+            - name: PGSSLMODE
+              value: require
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres.lake-principal.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres.lake-principal.credentials.postgresql.acid.zalan.do
+                  key: password
+            - name: POLARIS_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-postgres
+                  key: POLARIS_CREDENTIAL
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+      volumes:
+        - name: sql
+          configMap:
+            name: lake-sql

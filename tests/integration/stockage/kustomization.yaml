@@ -34,3 +34,10 @@ patches:
       metadata:
         name: lake-principal
         namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: lake-schema
+        namespace: spark

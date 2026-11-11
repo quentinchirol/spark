@@ -32,6 +32,9 @@ spec:
       # liste de Spilo + pg_extension_base (pg_lake)
       shared_preload_libraries: "bg_mon,pg_stat_statements,pgextwlist,pg_auth_mon,set_user,pg_cron,pg_extension_base"
       cron.database_name: lake
+      # pg_cron lance la fusion dans un processus de fond (pas de connexion réseau ni de mot de passe)
+      cron.use_background_workers: "on"
+      max_worker_processes: "16"
       # emplacement des tables Iceberg créées par pg_lake (sous le bucket autorisé dans Polaris)
       pg_lake_iceberg.default_location_prefix: s3://warehouse/postgres
       # statement_timeout de 2 s : posé sur le rôle de l'application seulement (sql/), pas sur la fusion

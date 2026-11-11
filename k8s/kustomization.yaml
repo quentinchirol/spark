@@ -12,10 +12,18 @@ resources:
   - pipeline/cronjob.yaml
   # PostgreSQL principal (nécessite k8s/operateurs appliqué avant)
   - postgres/principal.yaml
+  - postgres/schema.yaml
 # images désignées dans des variables d'environnement (image des executors Spark)
 configurations:
   - config-kustomize/images-env.yaml
 configMapGenerator:
+  # scripts SQL de la base lake (Job lake-schema), joués dans l'ordre des noms
+  - name: lake-sql
+    files:
+      - postgres/sql/01-extensions.sql
+      - postgres/sql/02-modele.sql
+      - postgres/sql/03-roles.sql
+      - postgres/sql/04-planification.sql
   # script d'initialisation de Polaris (Job polaris-init)
   - name: polaris-init
     files:
