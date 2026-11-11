@@ -1,0 +1,61 @@
+# Tests d'intégration sur un vrai cluster Kubernetes (kind) : démarre MinIO (4 pods) + Polaris (2 pods)
+# et vérifie le comportement réel : table lisible, 1 pod MinIO arrêté, droits du principal trino.
+# Voir tests/integration/. Se lance sur les changements du stockage et à la demande.
+name: Integration
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "k8s/**"
+      - "tests/integration/**"
+      - "scripts/generer-secrets.sh"
+      - ".github/workflows/integration.yml"
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stockage:
+    name: Stockage · MinIO + Polaris sur kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: lakehouse
+      - name: Secrets de test
+        run: scripts/generer-secrets.sh --si-absents
+      - name: Déployer le stockage
+        run: kubectl apply -k tests/integration/stockage
+      - name: Attendre MinIO, les Jobs d'initialisation et Polaris
+        run: |
+          kubectl -n spark rollout status sts/minio --timeout=240s
+          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=300s
+          kubectl -n spark rollout status deploy/polaris --timeout=240s
+          kubectl -n spark get pods -o wide
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test d'intégration
+        run: |
+          # Polaris renvoie aux clients l'adresse S3 http://minio:9000 : on la fait pointer vers le port-forward
+          echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
+          pip install "pyiceberg[pyarrow]"
+          python tests/integration/tester_stockage.py
+      - name: Diagnostic en cas d'échec
+        if: failure() || cancelled()
+        run: |
+          kubectl -n spark get pods,jobs -o wide || true
+          for r in sts/minio deploy/polaris job/minio-init job/polaris-bootstrap job/polaris-init sts/polaris-db; do
+            echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
+          done
+          kubectl -n spark describe pods | tail -150 || true

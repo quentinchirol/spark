@@ -32,7 +32,7 @@ def lire_env(fichier: Path) -> dict[str, str]:
 def s3_local():
     if not shutil.which("kubectl"):
         pytest.skip("kubectl indisponible")
-    tunnel = subprocess.Popen(["kubectl", "-n", "spark", "port-forward", "svc/seaweedfs", f"{PORT_LOCAL}:8333"],
+    tunnel = subprocess.Popen(["kubectl", "-n", "spark", "port-forward", "svc/minio", f"{PORT_LOCAL}:9000"],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(50):

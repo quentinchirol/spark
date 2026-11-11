@@ -1,0 +1,29 @@
+# Stockage seul pour la CI : k8s/ sans Spark Connect, Trino ni le traitement planifié
+# (leurs images se construisent en local, inutiles pour tester MinIO + Polaris).
+#   kubectl apply -k tests/integration/stockage
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../k8s
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: spark-connect
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: trino
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: pipeline-dashboard
+        namespace: spark

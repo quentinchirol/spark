@@ -5,8 +5,8 @@ namespace: spark
 resources:
   - commun/namespace.yaml
   - commun/rbac.yaml
-  - stockage/seaweedfs.yaml
-  - stockage/iceberg-rest.yaml
+  - stockage/minio.yaml
+  - stockage/polaris.yaml
   - spark-connect/deployment.yaml
   - trino/deployment.yaml
   - pipeline/cronjob.yaml
@@ -14,6 +14,14 @@ resources:
 configurations:
   - config-kustomize/images-env.yaml
 configMapGenerator:
+  # script d'initialisation de Polaris (Job polaris-init)
+  - name: polaris-init
+    files:
+      - init.py=stockage/polaris-init.py
+  # schéma de la base de Polaris (créé au premier démarrage de polaris-db)
+  - name: polaris-db-init
+    files:
+      - init.sql=stockage/polaris-db-init.sql
   - name: spark-conf
     files:
       - spark-connect/spark-defaults.conf
@@ -65,3 +73,25 @@ secretGenerator:
   - name: trino-tls
     files:
       - secrets/trino-tls.pem
+  # administrateur MinIO (création du bucket et des utilisateurs spark / trino)
+  - name: minio-root
+    envs:
+      - secrets/minio-root.env
+  # Polaris : compte root + mot de passe de la base du catalogue
+  - name: polaris-secrets
+    envs:
+      - secrets/polaris.env
+  # identifiants OAuth2 de Spark (écriture) et de Trino (lecture seule) dans Polaris
+  - name: polaris-spark
+    envs:
+      - secrets/polaris-spark.env
+    options:
+      disableNameSuffixHash: true
+  - name: polaris-trino
+    envs:
+      - secrets/polaris-trino.env
+  # clés de signature des jetons Polaris (identiques sur les 2 pods)
+  - name: polaris-keys
+    files:
+      - secrets/polaris-private.pem
+      - secrets/polaris-public.pem
