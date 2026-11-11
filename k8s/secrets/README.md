@@ -18,5 +18,6 @@ scripts/generer-secrets.sh --rotation   # régénère tout (après une fuite, ou
 | `polaris.env`   | compte root de Polaris, mot de passe de sa base PostgreSQL |
 | `polaris-spark.env`, `polaris-trino.env`, `polaris-postgres.env` | identifiants OAuth2 `client:secret` dans Polaris : Spark (écriture), Trino (lecture), PostgreSQL principal / pg_lake (écriture) |
 | `polaris-private.pem`, `polaris-public.pem` | clés de signature des jetons Polaris (communes aux 2 pods) |
+| `sauvegardes.env` | clé du stockage objet **hors cluster** des sauvegardes PostgreSQL (WAL-G) ; `CLONE_*` = même clé, pour restaurer |
 | `trino.env`     | secret interne de Trino |
 | `trino-tls.pem` | clé privée + certificat HTTPS de Trino ; `trino-cert.pem` : certificat seul, pour les clients |

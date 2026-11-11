@@ -38,6 +38,69 @@ spec:
       # emplacement des tables Iceberg créées par pg_lake (sous le bucket autorisé dans Polaris)
       pg_lake_iceberg.default_location_prefix: s3://warehouse/postgres
       # statement_timeout de 2 s : posé sur le rôle de l'application seulement (sql/), pas sur la fusion
+  # Sauvegardes continues (WAL-G) vers un stockage objet HORS du cluster : archivage de chaque WAL + sauvegarde
+  # de base chaque nuit, 7 conservées. Restauration à un instant donné : docs/sauvegardes.md.
+  # Destination et clé dans le Secret sauvegardes-postgres (k8s/secrets/sauvegardes.env) :
+  #   - local / CI : MinIO « sauvegardes » lancé hors de Kubernetes (scripts/dev/sauvegardes.sh) ;
+  #   - GKE : bucket GCS via son API compatible S3 (infra/gke/creer-sauvegardes.sh).
+  env:
+    - name: USE_WALG_BACKUP
+      value: "true"
+    - name: USE_WALG_RESTORE
+      value: "true"
+    - name: CLONE_USE_WALG_RESTORE
+      value: "true"
+    - name: WAL_S3_BUCKET
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: WAL_S3_BUCKET
+    - name: WAL_BUCKET_SCOPE_PREFIX
+      value: ""
+    - name: AWS_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: AWS_ENDPOINT
+    - name: CLONE_AWS_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: CLONE_AWS_ENDPOINT
+    - name: AWS_REGION
+      value: us-east-1
+    - name: CLONE_AWS_REGION
+      value: us-east-1
+    - name: AWS_S3_FORCE_PATH_STYLE
+      value: "true"
+    - name: CLONE_AWS_S3_FORCE_PATH_STYLE
+      value: "true"
+    - name: WALG_DISABLE_S3_SSE
+      value: "true"
+    - name: BACKUP_SCHEDULE
+      value: "00 01 * * *"
+    - name: BACKUP_NUM_TO_RETAIN
+      value: "7"
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: AWS_ACCESS_KEY_ID
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: AWS_SECRET_ACCESS_KEY
+    - name: CLONE_AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: CLONE_AWS_ACCESS_KEY_ID
+    - name: CLONE_AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: sauvegardes-postgres
+          key: CLONE_AWS_SECRET_ACCESS_KEY
   patroni:
     synchronous_mode: true
     # non strict : si plus aucune réplique n'est disponible, le primaire continue seul plutôt que de bloquer

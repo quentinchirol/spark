@@ -100,6 +100,12 @@ secretGenerator:
   - name: polaris-trino
     envs:
       - secrets/polaris-trino.env
+  # sauvegardes PostgreSQL (WAL-G) vers le stockage objet hors cluster
+  - name: sauvegardes-postgres
+    envs:
+      - secrets/sauvegardes.env
+    options:
+      disableNameSuffixHash: true
   # PostgreSQL principal (pg_lake) : écrit les tables app.* via Polaris
   - name: polaris-postgres
     envs:
