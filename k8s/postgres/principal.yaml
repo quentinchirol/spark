@@ -13,8 +13,8 @@ metadata:
   name: lake-principal
 spec:
   teamId: lake
-  # image Spilo 17 + pg_lake (image/postgres-lake) ; GKE : remplacée par ghcr.io (k8s/config-kustomize)
-  dockerImage: postgres-lake:17
+  # image Spilo + pg_lake, PostgreSQL 18 (image/postgres-lake) ; GKE : remplacée par ghcr.io (k8s/config-kustomize)
+  dockerImage: postgres-lake:18
   numberOfInstances: 3
   # PostgreSQL et le sidecar tournent sous l'utilisateur postgres de Spilo : même propriétaire pour le socket
   spiloRunAsUser: 101
@@ -27,7 +27,7 @@ spec:
   databases:
     lake: lake_app
   postgresql:
-    version: "17"
+    version: "18"
     parameters:
       # liste de Spilo + pg_extension_base (pg_lake)
       shared_preload_libraries: "bg_mon,pg_stat_statements,pgextwlist,pg_auth_mon,set_user,pg_cron,pg_extension_base"
@@ -62,7 +62,7 @@ spec:
         emptyDir: {}
   sidecars:
     - name: pgduck
-      image: postgres-lake:17
+      image: postgres-lake:18
       command:
         - /bin/sh
         - -c
@@ -72,7 +72,7 @@ spec:
           mkdir -p /tmp/pgduck-cache
           printf "CREATE SECRET minio (TYPE S3, KEY_ID '%s', SECRET '%s', ENDPOINT 'minio:9000', URL_STYLE 'path', USE_SSL false, REGION 'us-east-1', SCOPE 's3://warehouse');\n" \
             "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > /tmp/pgduck-init.sql
-          exec /usr/lib/postgresql/17/bin/pgduck_server \
+          exec /usr/lib/postgresql/18/bin/pgduck_server \
             --memory_limit "$PGDUCK_MEMORY_LIMIT" \
             --cache_dir /tmp/pgduck-cache \
             --init_file_path /tmp/pgduck-init.sql

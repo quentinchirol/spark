@@ -75,14 +75,14 @@ jobs:
         with:
           context: image/postgres-lake
           load: true
-          tags: postgres-lake:17
+          tags: postgres-lake:18
           cache-from: type=gha,scope=postgres-lake
           cache-to: type=gha,mode=max,scope=postgres-lake
       - uses: helm/kind-action@v1.12.0
         with:
           cluster_name: lakehouse
       - name: Charger l'image dans kind
-        run: kind load docker-image postgres-lake:17 --name lakehouse
+        run: kind load docker-image postgres-lake:18 --name lakehouse
       - name: Secrets de test
         run: scripts/generer-secrets.sh --si-absents
       - name: Opérateur PostgreSQL

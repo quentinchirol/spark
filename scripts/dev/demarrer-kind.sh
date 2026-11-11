@@ -14,10 +14,10 @@ fi
 echo "==> Construction des images"
 docker build -t spark-lakehouse:4.1.3 image
 docker build -t lakehouse-pipeline:1.0 python
-docker build -t postgres-lake:17 image/postgres-lake
+docker build -t postgres-lake:18 image/postgres-lake
 
 echo "==> Chargement des images dans le cluster (pullPolicy: Never)"
-kind load docker-image --name "$CLUSTER" spark-lakehouse:4.1.3 lakehouse-pipeline:1.0 postgres-lake:17
+kind load docker-image --name "$CLUSTER" spark-lakehouse:4.1.3 lakehouse-pipeline:1.0 postgres-lake:18
 
 if [ -x scripts/generer-secrets.sh ]; then
   echo "==> Secrets locaux (générés seulement s'ils manquent)"

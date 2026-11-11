@@ -16,7 +16,8 @@ socket Unix. CloudNativePG ne permet pas d'ajouter un conteneur aux pods d'une i
 PostgreSQL principal géré par **l'opérateur Zalando** (`postgres-operator` v2.0.1, Patroni) :
 
 - 3 instances, `synchronous_mode` Patroni (aucune écriture confirmée perdue lors d'une bascule) ;
-- image Spilo 17 + paquet `postgresql-17-pg-lake` (dépôt Pigsty) : `image/postgres-lake/` ;
+- PostgreSQL **18** : image Spilo `spilo-18:4.1-p2` (image par défaut de l'opérateur ; aucun tag `spilo-17` n'existe
+  pour Spilo 4.1) + paquet `postgresql-18-pg-lake` (dépôt Pigsty) : `image/postgres-lake/` ;
 - `pgduck_server` en **sidecar** (champ `sidecars` du manifeste), socket partagé par un volume `emptyDir` sur `/tmp` ;
 - base nommée **`lake`** : pg_lake utilise le nom de la base comme préfixe de catalogue REST, il doit être égal au
   catalogue Polaris `lake` ;
