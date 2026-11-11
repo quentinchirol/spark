@@ -65,6 +65,9 @@ metadata:
 spec:
   template:
     spec:
+      initContainers:
+        - name: attendre-base
+          imagePullPolicy: Always
       containers:
         - name: dagster-code
           imagePullPolicy: Always

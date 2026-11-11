@@ -106,6 +106,28 @@ def graphql(client, requete, **variables):
     return corps["data"]
 
 
+CODE = """
+query($r: RepositorySelector!) {
+  repositoryOrError(repositorySelector: $r) {
+    __typename ... on Repository { jobs { name } } ... on RepositoryNotFoundError { message } ... on PythonError { message }
+  }
+}"""
+
+
+def attendre_code(client, delai=180):
+    """Attend que l'interface voie le job « ventes » (serveur de code chargé) ; recharge l'espace de travail."""
+    selecteur = {"repositoryLocationName": SELECTEUR["repositoryLocationName"],
+                 "repositoryName": SELECTEUR["repositoryName"]}
+    debut, resultat = time.time(), None
+    while time.time() - debut < delai:
+        graphql(client, "mutation { reloadWorkspace { __typename } }")
+        resultat = graphql(client, CODE, r=selecteur)["repositoryOrError"]
+        if resultat["__typename"] == "Repository" and any(j["name"] == "ventes" for j in resultat["jobs"]):
+            return
+        time.sleep(5)
+    raise RuntimeError(f"code Dagster non chargé après {delai} s : {resultat}")
+
+
 def lancer_run(client, echec=""):
     config = {"ops": {etape: {"config": {"echec": echec}} for etape in ETAPES}}
     resultat = graphql(client, LANCER, p={"selector": SELECTEUR, "runConfigData": config})["launchRun"]
@@ -181,6 +203,7 @@ def main():
                         (trino["TRINO_S3_ACCESS_KEY"], trino["TRINO_S3_SECRET_KEY"]))
         client = httpx.Client(base_url=f"http://localhost:{PORT_DAGSTER}")
 
+        attendre_code(client)
         print("1. Fichiers → bronze → silver → gold, chaque étape dans un Job Kubernetes éphémère")
         deposer(s3, "2026-11-02.csv", FICHIER_1)
         run1 = lancer_run(client)

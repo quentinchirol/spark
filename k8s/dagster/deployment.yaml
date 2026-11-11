@@ -82,6 +82,41 @@ spec:
       serviceAccountName: dagster
       # laisser aux runs en cours le temps de finir leur étape à l'arrêt du pod
       terminationGracePeriodSeconds: 120
+      initContainers:
+        # attendre la base : démarré sans elle, le serveur de code reste en erreur sans s'arrêter (et sans aucun job
+        # visible dans Dagster), alors que l'interface et le démon, eux, redémarrent jusqu'à la joindre
+        - name: attendre-base
+          image: lakehouse-dagster:1.0
+          imagePullPolicy: Never
+          command:
+            - python
+            - -c
+            - |
+              import os, time, psycopg2
+              while True:
+                  try:
+                      psycopg2.connect(host="lake-outils", dbname="dagster", connect_timeout=3,
+                                       user=os.environ["DAGSTER_PG_USERNAME"],
+                                       password=os.environ["DAGSTER_PG_PASSWORD"]).close()
+                      break
+                  except psycopg2.OperationalError as erreur:
+                      print("base de Dagster pas encore prête :", str(erreur).strip().splitlines()[0], flush=True)
+                      time.sleep(3)
+          env:
+            - name: DAGSTER_PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: password
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
       containers:
         - name: dagster-code
           image: lakehouse-dagster:1.0
