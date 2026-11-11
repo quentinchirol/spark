@@ -57,6 +57,8 @@ def catalogue(credential, acces_s3):
             "credential": credential,
             "scope": "PRINCIPAL_ROLE:ALL",
             "oauth2-server-uri": f"http://localhost:{PORT_POLARIS}/api/catalog/v1/oauth/tokens",
+            # pas d'identifiants temporaires (MinIO sans STS) : comme Spark, le client utilise sa propre clé S3
+            "header.X-Iceberg-Access-Delegation": "",
             "s3.endpoint": f"http://localhost:{PORT_S3}",
             "s3.access-key-id": acces_s3[0],
             "s3.secret-access-key": acces_s3[1],
