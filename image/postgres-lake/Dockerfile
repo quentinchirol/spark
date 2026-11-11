@@ -8,10 +8,17 @@ FROM ${SPILO_IMAGE}
 
 # version de pg_lake (paquet Debian du dépôt Pigsty) ; bibliothèques et pgduck_server doivent être de la même version
 ARG PG_LAKE_VERSION=3.6*
+# miroir Ubuntu : archive.ubuntu.com et security.ubuntu.com ne se résolvent pas depuis les runners GitHub
+# (constaté en CI, même avec le réseau de l'hôte) ; pg_lake y prend libjansson4 et libsnappy1v5
+ARG UBUNTU_MIRROR=http://mirrors.edge.kernel.org/ubuntu
 
 # reprises : un dépôt lent ou un DNS capricieux ne fait pas échouer la construction
 RUN set -eux; \
     echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-reprises; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do \
+      if [ -f "$f" ]; then sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#${UBUNTU_MIRROR}#g" "$f"; fi; \
+    done; \
+    grep -rh '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ || true; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
     install -d -m 0755 /etc/apt/keyrings; \
