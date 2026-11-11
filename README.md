@@ -33,6 +33,8 @@ spark/
 ├── .devcontainer/        environnement prêt pour GitHub Codespaces
 ├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
 └── python/               tests et benchmark
+    ├── ecrivain/         writers Kafka « app » → PostgreSQL principal (image lakehouse-ecrivain)
+    ├── passerelle/       passerelle d'écriture de référence, FastAPI → Kafka (image lakehouse-passerelle)
     ├── lakehouse/        code partagé : connexion, donnees, requetes, requetes_sql, agregats
     ├── tests/            tests pytest
     ├── benchmark.py      chronométrage cache / iceberg / trino
@@ -213,6 +215,13 @@ fusionnée dans la table Iceberg `app.<table>`, lue par Spark, Trino et le pool 
 
 Sauvegardé en continu (WAL-G) vers un stockage **hors du cluster**, restaurable à la seconde sur 7 jours :
 [docs/sauvegardes.md](docs/sauvegardes.md).
+
+## Écritures de l'application : passerelle → Kafka → writers
+
+L'application envoie chaque création, modification ou suppression à la passerelle d'écriture (`POST /ecritures`,
+réponse 202 en quelques millisecondes). Le message est conservé dans Kafka (3 nœuds), puis des writers l'écrivent
+par lots dans le PostgreSQL principal ; KEDA ajoute des writers quand le retard monte. Ni perte ni doublon, même si un
+pod tombe. Détails, codes de réponse, messages refusés et test de charge : [docs/ecritures.md](docs/ecritures.md).
 
 ## Stockage et catalogue : MinIO + Polaris
 
