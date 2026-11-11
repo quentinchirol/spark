@@ -21,6 +21,9 @@ resources:
   - ecrivain/scaledobject.yaml
   # passerelle d'écriture de référence (HTTP → Kafka)
   - passerelle/deployment.yaml
+  # Dagster (nécessite k8s/operateurs) : orchestration des traitements Spark à la demande (k8s/traitements)
+  - dagster/postgres.yaml
+  - dagster/deployment.yaml
 # images désignées dans des variables d'environnement (image des executors Spark)
 configurations:
   - config-kustomize/images-env.yaml
@@ -40,6 +43,20 @@ configMapGenerator:
   - name: polaris-db-init
     files:
       - init.sql=stockage/polaris-db-init.sql
+  # configuration de l'instance Dagster (base, file d'attente des runs) et emplacement du code
+  - name: dagster-instance
+    files:
+      - dagster/dagster.yaml
+      - dagster/workspace.yaml
+  # traitements Spark à la demande, montés dans les pods pilotes créés par Dagster
+  - name: traitements
+    files:
+      - traitements/spark-defaults.conf
+      - traitements/lancer.sh
+      - traitements/ventes.py
+    options:
+      # nom fixe : référencé par les Jobs créés par Dagster (python/orchestration), hors de kustomize
+      disableNameSuffixHash: true
   - name: spark-conf
     files:
       - spark-connect/spark-defaults.conf

@@ -5,3 +5,5 @@ pytest
 fastapi==0.115.6
 httpx
 asyncpg==0.30.0
+dagster==1.13.29
+dagster-k8s==0.29.29

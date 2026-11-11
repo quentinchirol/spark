@@ -67,7 +67,7 @@ def silver(spark):
     brut = spark.table(BRONZE)
     typees = brut.select(
         F.trim("id").alias("id"),
-        F.to_date("date").alias("date"),
+        F.col("date").try_cast("date").alias("date"),
         F.trim("client").alias("client"),
         F.trim("produit").alias("produit"),
         F.col("quantite").try_cast("int").alias("quantite"),

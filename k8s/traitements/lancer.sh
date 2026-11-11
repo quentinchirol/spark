@@ -6,12 +6,15 @@ set -euo pipefail
 conf=/tmp/spark-conf
 mkdir -p "$conf"
 cp /traitements/spark-defaults.conf "$conf/"
+# adresse IP du pod (les executors joignent le pilote par elle)
+ip=$(python3 -c 'import socket; print(socket.gethostbyname(socket.gethostname()))')
 {
-  echo "spark.driver.host                $(hostname -i | awk '{print $1}')"
+  echo "spark.driver.host                $ip"
   echo "spark.kubernetes.driver.pod.name $HOSTNAME"
   echo "spark.app.name                   ${1%.py}-${2:-}"
   echo "spark.kubernetes.container.image $SPARK_EXECUTOR_IMAGE"
   echo "spark.kubernetes.container.image.pullPolicy $SPARK_EXECUTOR_PULL_POLICY"
+  echo "spark.kubernetes.executor.request.cores ${SPARK_EXECUTOR_REQUEST_CORES:-500m}"
   echo "spark.sql.catalog.lake.credential $POLARIS_CREDENTIAL"
 } >> "$conf/spark-defaults.conf"
 export SPARK_CONF_DIR="$conf"

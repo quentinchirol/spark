@@ -17,9 +17,10 @@ docker build -t lakehouse-pipeline:1.0 python
 docker build -t postgres-lake:18 image/postgres-lake
 docker build -t lakehouse-ecrivain:1.0 -f python/ecrivain/Dockerfile python
 docker build -t lakehouse-passerelle:1.0 -f python/passerelle/Dockerfile python
+docker build -t lakehouse-dagster:1.0 -f python/orchestration/Dockerfile python
 
 echo "==> Chargement des images dans le cluster (pullPolicy: Never)"
-kind load docker-image --name "$CLUSTER" spark-lakehouse:4.1.3 lakehouse-pipeline:1.0 postgres-lake:18 lakehouse-ecrivain:1.0 lakehouse-passerelle:1.0
+kind load docker-image --name "$CLUSTER" spark-lakehouse:4.1.3 lakehouse-pipeline:1.0 postgres-lake:18 lakehouse-ecrivain:1.0 lakehouse-passerelle:1.0 lakehouse-dagster:1.0
 
 if [ -x scripts/generer-secrets.sh ]; then
   echo "==> Secrets locaux (générés seulement s'ils manquent)"
@@ -42,5 +43,6 @@ cat <<'EOF'
 Stack démarrée. Dans deux terminaux :
   kubectl -n spark port-forward svc/spark-connect 15002:15002
   kubectl -n spark port-forward svc/trino 8443:8443
+  kubectl -n spark port-forward svc/dagster-webserver 3000:3000     # traitements à la demande
 Puis : cd python && pytest -v
 EOF
