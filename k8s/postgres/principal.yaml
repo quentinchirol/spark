@@ -54,7 +54,7 @@ spec:
       valueFrom:
         secretKeyRef:
           name: sauvegardes-postgres
-          key: WAL_S3_BUCKET
+          key: WAL_S3_BUCKET   # gitleaks:allow (nom de clé du Secret, pas une valeur secrète)
     - name: WAL_BUCKET_SCOPE_PREFIX
       value: ""
     - name: AWS_ENDPOINT
