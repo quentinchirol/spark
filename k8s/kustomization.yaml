@@ -90,6 +90,10 @@ secretGenerator:
   - name: polaris-trino
     envs:
       - secrets/polaris-trino.env
+  # PostgreSQL principal (pg_lake) : écrit les tables app.* via Polaris
+  - name: polaris-postgres
+    envs:
+      - secrets/polaris-postgres.env
   # clés de signature des jetons Polaris (identiques sur les 2 pods)
   - name: polaris-keys
     files:

@@ -16,7 +16,7 @@ scripts/generer-secrets.sh --rotation   # régénère tout (après une fuite, ou
 | `s3-trino.env`  | clé S3 en lecture seule (Trino) : utilisateur MinIO `trino` |
 | `minio-root.env` | compte administrateur de MinIO |
 | `polaris.env`   | compte root de Polaris, mot de passe de sa base PostgreSQL |
-| `polaris-spark.env`, `polaris-trino.env` | identifiants OAuth2 `client:secret` de Spark (écriture) et de Trino (lecture) dans Polaris |
+| `polaris-spark.env`, `polaris-trino.env`, `polaris-postgres.env` | identifiants OAuth2 `client:secret` dans Polaris : Spark (écriture), Trino (lecture), PostgreSQL principal / pg_lake (écriture) |
 | `polaris-private.pem`, `polaris-public.pem` | clés de signature des jetons Polaris (communes aux 2 pods) |
 | `trino.env`     | secret interne de Trino |
 | `trino-tls.pem` | clé privée + certificat HTTPS de Trino ; `trino-cert.pem` : certificat seul, pour les clients |

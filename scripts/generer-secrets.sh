@@ -13,7 +13,8 @@
 #   s3-trino.env    clé S3 en lecture seule (Trino) : utilisateur MinIO « trino »
 #   minio-root.env  compte administrateur de MinIO (création du bucket et des utilisateurs)
 #   polaris.env     compte root de Polaris + mot de passe de sa base PostgreSQL
-#   polaris-spark.env / polaris-trino.env   identifiants OAuth2 (client:secret) de Spark et de Trino dans Polaris
+#   polaris-spark.env / polaris-trino.env / polaris-postgres.env   identifiants OAuth2 (client:secret)
+#                   de Spark, Trino et du PostgreSQL principal (pg_lake) dans Polaris
 #   polaris-public.pem / polaris-private.pem   clés de signature des jetons Polaris (communes aux 2 pods)
 #   trino.env       secret interne de Trino
 #   trino-tls.pem   clé privée + certificat HTTPS de Trino ; trino-cert.pem : certificat seul (clients)
@@ -85,6 +86,7 @@ ecrire minio-root.env minio_root_env
 ecrire polaris.env polaris_env
 ecrire polaris-spark.env polaris_client_env
 ecrire polaris-trino.env polaris_client_env
+ecrire polaris-postgres.env polaris_client_env
 
 # clés de signature des jetons Polaris : les deux pods doivent partager la même paire
 if [ "$MODE" = "--rotation" ] || [ ! -s polaris-private.pem ] || [ ! -s polaris-public.pem ]; then
