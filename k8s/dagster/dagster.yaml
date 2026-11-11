@@ -5,6 +5,8 @@ storage:
       hostname: lake-outils
       port: 5432
       db_name: dagster
+      # pilote psycopg2 (installé avec dagster-postgres) : SQLAlchemy 2.1 prend psycopg 3 par défaut, absent de l'image
+      scheme: postgresql+psycopg2
       username:
         env: DAGSTER_PG_USERNAME
       password:
