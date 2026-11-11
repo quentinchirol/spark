@@ -18,9 +18,10 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs", "jobs/status"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # delete : un Job en échec est supprimé avec ses pods par Dagster (sans ce droit, les pods restaient en Error)
   - apiGroups: [""]
     resources: ["pods", "pods/status"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]

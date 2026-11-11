@@ -13,8 +13,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from pyspark.sql import SparkSession, Window
-from pyspark.sql import functions as F
+from pyspark.sql import SparkSession
 
 COLONNES = ["id", "date", "client", "produit", "quantite", "prix_unitaire"]
 BRONZE, SILVER, GOLD = "lake.bronze.ventes", "lake.silver.ventes", "lake.gold.ventes_par_jour"
@@ -59,41 +58,46 @@ def bronze(spark):
     print(f"bronze : {len(lignes)} ligne(s) chargée(s)")
 
 
+# Lignes de bronze typées ; une ligne invalide a au moins une colonne obligatoire à NULL (valeur illisible)
+TYPEES = f"""SELECT trim(id) AS id, try_cast(date AS date) AS date, trim(client) AS client, trim(produit) AS produit,
+                    try_cast(quantite AS int) AS quantite, try_cast(prix_unitaire AS decimal(12,2)) AS prix_unitaire,
+                    _charge_le, _fichier, _ligne
+             FROM {BRONZE}"""
+VALIDE = "id IS NOT NULL AND id <> '' AND date IS NOT NULL AND quantite > 0 AND prix_unitaire >= 0"
+
+
+# Silver et gold en SQL, sources désignées par leur nom : avec Spark 4.1 + Iceberg 1.12, un MERGE dont la source est
+# une vue temporaire construite par l'API DataFrame à partir d'une table Iceberg échoue (« No plan for
+# TableReference », constaté en CI)
 def silver(spark):
     spark.sql("CREATE NAMESPACE IF NOT EXISTS lake.silver")
     spark.sql(f"""CREATE TABLE IF NOT EXISTS {SILVER} (
         id string, date date, client string, produit string, quantite int, prix_unitaire decimal(12,2),
         _charge_le timestamp) USING iceberg PARTITIONED BY (months(date))""")
-    brut = spark.table(BRONZE)
-    typees = brut.select(
-        F.trim("id").alias("id"),
-        F.col("date").try_cast("date").alias("date"),
-        F.trim("client").alias("client"),
-        F.trim("produit").alias("produit"),
-        F.col("quantite").try_cast("int").alias("quantite"),
-        F.col("prix_unitaire").try_cast("decimal(12,2)").alias("prix_unitaire"),
-        "_charge_le", "_fichier", "_ligne")
-    valides = typees.where("id IS NOT NULL AND id <> '' AND date IS NOT NULL AND quantite > 0 AND prix_unitaire >= 0")
-    print(f"silver : {typees.count() - valides.count()} ligne(s) invalide(s) écartée(s)")
-    derniere = Window.partitionBy("id").orderBy(F.desc("_charge_le"), F.desc("_fichier"), F.desc("_ligne"))
-    uniques = (valides.withColumn("_rang", F.row_number().over(derniere)).where("_rang = 1")
-               .drop("_rang", "_fichier", "_ligne"))
-    uniques.createOrReplaceTempView("lot_silver")
-    spark.sql(f"""MERGE INTO {SILVER} t USING lot_silver s ON t.id = s.id
-                  WHEN MATCHED AND s._charge_le > t._charge_le THEN UPDATE SET *
-                  WHEN NOT MATCHED THEN INSERT *""")
+    invalides = spark.sql(f"SELECT count_if(NOT coalesce({VALIDE}, false)) FROM ({TYPEES})").first()[0]
+    print(f"silver : {invalides} ligne(s) invalide(s) écartée(s)")
+    # une ligne par vente : la plus récemment chargée (puis le dernier fichier, la dernière ligne)
+    spark.sql(f"""MERGE INTO {SILVER} t
+        USING (SELECT id, date, client, produit, quantite, prix_unitaire, _charge_le
+               FROM (SELECT *, row_number() OVER (PARTITION BY id
+                                                  ORDER BY _charge_le DESC, _fichier DESC, _ligne DESC) AS _rang
+                     FROM ({TYPEES}) WHERE {VALIDE})
+               WHERE _rang = 1) s
+        ON t.id = s.id
+        WHEN MATCHED AND s._charge_le > t._charge_le THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *""")
 
 
 def gold(spark):
     spark.sql("CREATE NAMESPACE IF NOT EXISTS lake.gold")
-    agregat = (spark.table(SILVER).groupBy("date")
-               .agg(F.count("*").alias("nb_ventes"), F.sum("quantite").alias("quantite_totale"),
-                    F.sum(F.col("quantite") * F.col("prix_unitaire")).cast("decimal(18,2)").alias("chiffre_affaires")))
-    if os.environ.get("ECHEC") == "gold":
-        # échec provoqué PENDANT l'écriture (dans les tâches Spark) : le commit Iceberg n'a jamais lieu
-        agregat = agregat.where(F.assert_true(F.lit(False), "échec provoqué (test)").isNull())
-    agregat.writeTo(GOLD).using("iceberg").createOrReplace()
-    print(f"gold : {spark.table(GOLD).count()} jour(s)")
+    # ECHEC=gold : échec provoqué PENDANT l'écriture (évalué dans les tâches Spark, pour chaque jour) ; le commit
+    # Iceberg n'a jamais lieu
+    echec = " HAVING assert_true(count(*) < 0, 'échec provoqué (test)') IS NULL" if os.environ.get("ECHEC") == "gold" else ""
+    spark.sql(f"""CREATE OR REPLACE TABLE {GOLD} USING iceberg AS
+        SELECT date, count(*) AS nb_ventes, sum(quantite) AS quantite_totale,
+               CAST(sum(quantite * prix_unitaire) AS decimal(18,2)) AS chiffre_affaires
+        FROM {SILVER} GROUP BY date{echec}""")
+    print(f"gold : {spark.sql(f'SELECT count(*) FROM {GOLD}').first()[0]} jour(s)")
 
 
 if __name__ == "__main__":
