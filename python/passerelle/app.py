@@ -33,10 +33,32 @@ def creer_producteur():
 def creer_app(fabrique_producteur=creer_producteur) -> FastAPI:
     @asynccontextmanager
     async def cycle_de_vie(app: FastAPI):
-        app.state.producteur = fabrique_producteur()
-        await app.state.producteur.start()
+        # Kafka peut être absent au démarrage (déploiement simultané, bascule) : la passerelle démarre quand même,
+        # se déclare « pas prête » et répond 503 jusqu'à ce que le producteur soit connecté
+        app.state.pret = asyncio.Event()
+
+        async def essayer() -> bool:
+            producteur = fabrique_producteur()
+            try:
+                await producteur.start()
+            except Exception:  # noqa: BLE001
+                await producteur.stop()
+                return False
+            app.state.producteur = producteur
+            app.state.pret.set()
+            return True
+
+        async def reessayer():
+            while not await essayer():
+                await asyncio.sleep(2)
+
+        # premier essai avant d'accepter du trafic ; en cas d'échec, nouveaux essais en arrière-plan
+        tache = None if await essayer() else asyncio.create_task(reessayer())
         yield
-        await app.state.producteur.stop()
+        if tache:
+            tache.cancel()
+        if app.state.pret.is_set():
+            await app.state.producteur.stop()
 
     app = FastAPI(title="Passerelle d'écriture", lifespan=cycle_de_vie)
 
@@ -47,6 +69,9 @@ def creer_app(fabrique_producteur=creer_producteur) -> FastAPI:
             ecriture = valider(corps)
         except ContratInvalide as erreur:
             return JSONResponse(status_code=422, content={"statut": "refusé", "raison": str(erreur)})
+        if not app.state.pret.is_set():
+            return JSONResponse(status_code=503, content={"statut": "réessayer", "id": str(ecriture.id)},
+                                headers={"Retry-After": "1"})
         try:
             await asyncio.wait_for(
                 app.state.producteur.send_and_wait(TOPIC, ecriture.en_json(), key=ecriture.cle_kafka), DELAI_ENVOI_S)
@@ -57,6 +82,9 @@ def creer_app(fabrique_producteur=creer_producteur) -> FastAPI:
 
     @app.get("/sante")
     async def sante():
+        # sonde de disponibilité : pas de trafic tant que Kafka n'est pas joignable
+        if not app.state.pret.is_set():
+            return JSONResponse(status_code=503, content={"statut": "kafka indisponible"})
         return {"statut": "ok"}
 
     return app

@@ -74,8 +74,17 @@ async def principal() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         boucle.add_signal_handler(sig, arret.set)
 
-    await consommateur.start()
-    await producteur.start()
+    # Kafka peut être absent au démarrage : on réessaie au lieu de s'arrêter (sinon l'attente de Kubernetes entre
+    # deux redémarrages s'allonge jusqu'à 5 min)
+    for client in (consommateur, producteur):
+        while not arret.is_set():
+            try:
+                await client.start()
+                break
+            except Exception as erreur:  # noqa: BLE001
+                journal.warning("Kafka injoignable (%s), nouvel essai dans 3 s", erreur)
+                await client.stop()
+                await asyncio.sleep(3)
     async with pool.acquire() as connexion:
         connues = await tables_connues(connexion)
     total, depuis = 0, time.monotonic()

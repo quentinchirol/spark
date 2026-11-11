@@ -43,6 +43,8 @@ def historique_cron(pod):
     print(sql(pod, "SELECT jobid, jobname, database, schedule, active FROM cron.job", base="postgres"))
     print(sql(pod, "SELECT start_time, status, left(return_message, 300) FROM cron.job_run_details "
                    "ORDER BY start_time DESC LIMIT 5", base="postgres"))
+    print(sql(pod, "SELECT current_setting('max_worker_processes'), string_agg(backend_type || ':' || n, ', ') "
+                   "FROM (SELECT backend_type, count(*) n FROM pg_stat_activity GROUP BY 1) t", base="postgres"))
 
 
 def lot(*messages):

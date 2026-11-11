@@ -70,3 +70,21 @@ def test_kafka_trop_lent_503(monkeypatch):
     monkeypatch.setattr("passerelle.app.DELAI_ENVOI_S", 0.1)
     with client(FauxProducteur(lent=True)) as c:
         assert c.post("/ecritures", json=ecriture()).status_code == 503
+
+
+class ProducteurSansKafka(FauxProducteur):
+    async def start(self):
+        raise ConnectionError("Kafka injoignable")
+
+
+def test_sans_kafka_la_passerelle_demarre_et_repond_503():
+    corps = ecriture()
+    with client(ProducteurSansKafka()) as c:
+        assert c.get("/sante").status_code == 503
+        reponse = c.post("/ecritures", json=corps)
+    assert reponse.status_code == 503 and reponse.json()["id"] == corps["id"]
+
+
+def test_prete_des_le_demarrage_quand_kafka_est_joignable():
+    with client(FauxProducteur()) as c:
+        assert c.get("/sante").status_code == 200
