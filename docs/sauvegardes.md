@@ -34,7 +34,8 @@ kubectl -n spark exec $POD -c postgres -- envdir /run/etc/wal-e.d/env /scripts/p
 La restauration crée un **nouveau** cluster à partir des sauvegardes ; l'ancien n'est pas touché (il peut avoir disparu).
 
 1. Noter l'`uid` du cluster d'origine (`kubectl -n spark get postgresql lake-principal -o jsonpath='{.metadata.uid}'`)
-   et le préfixe WAL-G (`cat /run/etc/wal-e.d/env/WALG_S3_PREFIX` dans un pod, ou : `s3://<bucket>/spilo/lake-principal/<uid>/wal/18`).
+   et le préfixe WAL-G (`cat /run/etc/wal-e.d/env/WALG_S3_PREFIX` dans un pod ; constaté : `s3://<bucket>/spilo/lake-principal/wal/18`,
+   sans uid car l'opérateur garde l'ancien format de chemin, `enable_spilo_wal_path_compat`).
    **À conserver hors du cluster** (ex. dans la documentation d'exploitation) : sans eux, il faut lister le bucket.
 2. Créer le cluster restauré : copie du manifeste `k8s/postgres/principal.yaml` avec un autre nom et un bloc `clone` :
 
@@ -47,7 +48,7 @@ La restauration crée un **nouveau** cluster à partir des sauvegardes ; l'ancie
        cluster: lake-principal
        uid: "<uid du cluster d'origine>"
        timestamp: "2026-11-11T15:25:45+00:00"     # instant visé, fuseau obligatoire
-       s3_wal_path: "s3://<bucket>/spilo/lake-principal/<uid>/wal/18"
+       s3_wal_path: "s3://<bucket>/spilo/lake-principal/wal/18"   # = WALG_S3_PREFIX du cluster d'origine
        s3_endpoint: "<AWS_ENDPOINT de sauvegardes.env>"
        s3_force_path_style: true
    ```
@@ -56,8 +57,9 @@ La restauration crée un **nouveau** cluster à partir des sauvegardes ; l'ancie
 3. Attendre `kubectl -n spark get postgresql lake-restaure` → `Running`, vérifier les données, puis faire pointer
    l'application sur le nouveau cluster (ou le renommer en recréant `lake-principal` par clonage de `lake-restaure`).
 
-Cette procédure est exécutée à chaque CI par `tests/integration/tester_restauration.py` (cluster supprimé, sauvegardes
-vérifiées depuis l'extérieur de Kubernetes, restauration à un instant T entre deux écritures).
+Cette procédure est exécutée à chaque CI par `tests/integration/tester_restauration.py` : cluster supprimé avec ses
+volumes, sauvegardes vérifiées depuis l'extérieur de Kubernetes, restauration à un instant T entre deux écritures
+(constaté sur kind : cluster neuf ouvert en écriture **20 s** après sa création).
 
 ## Ce qui n'est PAS couvert ici
 
