@@ -42,26 +42,14 @@ spec:
           env:
             - name: KAFKA_BOOTSTRAP
               value: lakehouse-kafka-bootstrap:9092
-            # chemin critique (POST /ecritures/critiques) : PostgreSQL principal, rôle lake_critique. Secret optionnel :
-            # sans lui la passerelle démarre et le chemin critique répond 503.
+            # chemin critique (POST /ecritures/critiques) : PostgreSQL principal, rôle lake_critique ; identifiants lus
+            # dans le volume « identifiants-critiques » (ci-dessous) à l'ouverture des connexions
             - name: PGHOST
               value: lake-principal
             - name: PGDATABASE
               value: lake
             - name: PGSSLMODE
               value: require
-            - name: PGUSER
-              valueFrom:
-                secretKeyRef:
-                  name: lake-critique.lake-principal.credentials.postgresql.acid.zalan.do
-                  key: username
-                  optional: true
-            - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: lake-critique.lake-principal.credentials.postgresql.acid.zalan.do
-                  key: password
-                  optional: true
           ports:
             - name: http
               containerPort: 8000
@@ -76,6 +64,18 @@ spec:
               memory: 256Mi
             limits:
               memory: 512Mi
+          volumeMounts:
+            - name: identifiants-critiques
+              mountPath: /etc/lake-critique
+              readOnly: true
+      volumes:
+        # Secret créé par l'opérateur PostgreSQL avec le cluster : souvent APRÈS le démarrage de la passerelle. En
+        # volume (et non en variables, figées au démarrage du conteneur), il apparaît dans le pod dès sa création
+        # et à chaque rotation, sans redémarrage ; en attendant, le chemin critique répond 503 (constaté en CI)
+        - name: identifiants-critiques
+          secret:
+            secretName: lake-critique.lake-principal.credentials.postgresql.acid.zalan.do
+            optional: true
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
