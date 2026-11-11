@@ -2,7 +2,9 @@
 #   - stockage : MinIO (4 pods) + Polaris (2 pods) : table lisible, 1 pod MinIO arrêté, droits du principal trino ;
 #   - postgres : PostgreSQL principal (Zalando + pg_lake) : réplication synchrone, vue chaud + froid,
 #                fusion planifiée vers Iceberg, lecture des mêmes lignes par un autre moteur via Polaris ;
-#                sauvegardes WAL-G hors cluster et restauration à un instant donné dans un cluster neuf.
+#                sauvegardes WAL-G hors cluster et restauration à un instant donné dans un cluster neuf ;
+#   - ecriture : passerelle → Kafka → writers (KEDA) → PostgreSQL : ni perte ni doublon malgré un writer tué,
+#                writers ajoutés puis retirés selon le retard, test de charge k6 réduit (p99 < 500 ms).
 # Voir tests/integration/. Se lance sur les changements du stockage et à la demande.
 name: Integration
 
@@ -14,6 +16,9 @@ on:
       - "tests/integration/**"
       - "image/postgres-lake/**"
       - "scripts/**"
+      - "python/ecrivain/**"
+      - "python/passerelle/**"
+      - "python/lakehouse/contrat.py"
       - "scripts/generer-secrets.sh"
       - ".github/workflows/integration.yml"
   push:
@@ -124,3 +129,84 @@ jobs:
             echo "::group::logs $p"; kubectl -n spark logs "$p" --all-containers --tail=120 --prefix || true; echo "::endgroup::"
           done
           kubectl -n spark describe pods -l cluster-name=lake-principal | tail -80 || true
+
+  ecriture:
+    name: Écritures · passerelle → Kafka → writers KEDA → PostgreSQL sur kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Construire l'image PostgreSQL + pg_lake
+        uses: docker/build-push-action@v6
+        with:
+          context: image/postgres-lake
+          load: true
+          tags: postgres-lake:18
+          cache-from: type=gha,scope=postgres-lake
+      - name: Construire l'image des writers
+        uses: docker/build-push-action@v6
+        with:
+          context: python
+          file: python/ecrivain/Dockerfile
+          load: true
+          tags: lakehouse-ecrivain:1.0
+          cache-from: type=gha,scope=lakehouse-ecrivain
+      - name: Construire l'image de la passerelle
+        uses: docker/build-push-action@v6
+        with:
+          context: python
+          file: python/passerelle/Dockerfile
+          load: true
+          tags: lakehouse-passerelle:1.0
+          cache-from: type=gha,scope=lakehouse-passerelle
+      - uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: lakehouse
+      - name: Charger les images dans kind
+        run: kind load docker-image postgres-lake:18 lakehouse-ecrivain:1.0 lakehouse-passerelle:1.0 --name lakehouse
+      - name: Secrets de test
+        run: scripts/generer-secrets.sh --si-absents
+      - name: Stockage des sauvegardes, hors de Kubernetes
+        run: scripts/dev/sauvegardes.sh
+      - name: Opérateurs (PostgreSQL, Kafka, KEDA)
+        run: |
+          kubectl apply --server-side -k k8s/operateurs
+          kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/kafkanodepools.kafka.strimzi.io crd/kafkatopics.kafka.strimzi.io crd/scaledobjects.keda.sh --timeout=120s
+          kubectl -n spark rollout status deploy/postgres-operator deploy/strimzi-cluster-operator --timeout=300s
+          kubectl -n keda rollout status deploy/keda-operator deploy/keda-operator-metrics-apiserver --timeout=300s
+      - name: Déployer le chemin d'écriture
+        run: kubectl apply -k tests/integration/ecriture
+      - name: Attendre Kafka, PostgreSQL, le schéma, les writers et la passerelle
+        run: |
+          kubectl -n spark wait --for=condition=Ready kafka/lakehouse --timeout=600s
+          kubectl -n spark wait --for=condition=Ready kafkatopic/app kafkatopic/app-rejets --timeout=300s
+          kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=600s
+          kubectl -n spark wait --for=condition=complete job/lake-schema --timeout=300s
+          kubectl -n spark rollout status deploy/ecrivain deploy/passerelle --timeout=300s
+          kubectl -n spark get pods -o wide
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ni perte ni doublon (writer tué en plein flux), autoscaling KEDA
+        run: |
+          pip install httpx "pyiceberg[pyarrow]"
+          python tests/integration/tester_ecritures.py
+      - name: Test de charge k6 réduit (200 écritures/s, p99 < 500 ms)
+        run: |
+          kubectl -n spark exec "$(kubectl -n spark get pods -l cluster-name=lake-principal,spilo-role=master -o name)" -c postgres -- \
+            psql -U postgres -d lake -c "SELECT lake.creer_table('charge', 'client text, montant numeric(12,2)')"
+          kubectl -n spark port-forward svc/passerelle 18000:8000 >/dev/null 2>&1 &
+          sleep 3
+          docker run --rm --network host -i grafana/k6:1.0.0 run -e URL=http://localhost:18000 -e RATE=200 -e DUREE=30s - < tests/charge/ecritures.js
+      - name: Diagnostic en cas d'échec
+        if: failure() || cancelled()
+        run: |
+          kubectl -n spark get pods,jobs,kafka,kafkatopic,postgresql,scaledobject,hpa -o wide || true
+          for r in deploy/ecrivain deploy/passerelle deploy/strimzi-cluster-operator job/lake-schema pod/rafale; do
+            echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
+          done
+          echo "::group::KEDA"; kubectl -n keda logs deploy/keda-operator --tail=60 || true; kubectl -n spark describe scaledobject ecrivain | tail -30 || true; echo "::endgroup::"
+          for p in $(kubectl -n spark get pods -l strimzi.io/cluster=lakehouse -o name); do
+            echo "::group::logs $p"; kubectl -n spark logs "$p" --all-containers --tail=60 --prefix || true; echo "::endgroup::"
+          done
