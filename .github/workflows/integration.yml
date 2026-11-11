@@ -184,8 +184,11 @@ jobs:
           kubectl -n keda rollout status deploy/keda-operator deploy/keda-metrics-apiserver deploy/keda-admission --timeout=300s
       - name: Déployer le chemin d'écriture
         run: kubectl apply -k tests/integration/ecriture
-      - name: Attendre Kafka, PostgreSQL, le schéma, les writers et la passerelle
+      - name: Attendre Polaris, Kafka, PostgreSQL, le schéma, les writers et la passerelle
         run: |
+          # lake.creer_table crée des tables Iceberg via Polaris : le principal « postgres » doit y exister
+          # (polaris-init) ; sans cette attente, le test pouvait commencer avant (HTTP 401, constaté en CI)
+          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=420s
           kubectl -n spark wait --for=condition=Ready kafka/lakehouse --timeout=600s
           kubectl -n spark wait --for=condition=Ready kafkatopic/app kafkatopic/app-rejets --timeout=300s
           kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=600s
@@ -210,7 +213,7 @@ jobs:
         if: failure() || cancelled()
         run: |
           kubectl -n spark get pods,jobs,kafka,kafkatopic,postgresql,scaledobject,hpa -o wide || true
-          for r in deploy/ecrivain deploy/passerelle deploy/strimzi-cluster-operator job/lake-schema pod/rafale; do
+          for r in deploy/ecrivain deploy/passerelle deploy/strimzi-cluster-operator job/lake-schema job/polaris-init deploy/polaris pod/rafale; do
             echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
           done
           echo "::group::KEDA"; kubectl -n keda logs deploy/keda-operator --tail=60 || true; kubectl -n spark describe scaledobject ecrivain | tail -30 || true; echo "::endgroup::"
