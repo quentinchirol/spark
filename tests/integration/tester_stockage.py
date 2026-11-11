@@ -66,6 +66,10 @@ def catalogue(credential, acces_s3):
             "s3.access-key-id": acces_s3[0],
             "s3.secret-access-key": acces_s3[1],
             "s3.path-style-access": "true",
+            # le client Arrow abandonne par défaut une requête qui met plus de 3 s à répondre :
+            # trop court pendant que MinIO écarte un pod disparu
+            "s3.connect-timeout": "30",
+            "s3.request-timeout": "60",
             "s3.region": "us-east-1",
         },
     )
@@ -90,6 +94,21 @@ def avec_reprises(action, delai_max=90):
                 raise
             print(f"     nouvel essai ({type(erreur).__name__})")
             time.sleep(3)
+
+
+def diagnostic():
+    """Santé de MinIO vue depuis minio-0, pour comprendre un échec en mode dégradé."""
+    import urllib.request
+    for chemin in ("/minio/health/live", "/minio/health/cluster/read", "/minio/health/cluster"):
+        debut = time.monotonic()
+        try:
+            with urllib.request.urlopen(f"http://localhost:{PORT_S3}{chemin}", timeout=60) as reponse:
+                etat = reponse.status
+        except Exception as erreur:  # noqa: BLE001
+            etat = type(erreur).__name__ + " " + str(getattr(erreur, "code", ""))
+        print(f"DIAG {chemin} -> {etat} en {time.monotonic() - debut:.1f} s")
+    sortie = subprocess.run(["kubectl", "-n", NS, "logs", "minio-0", "--tail=40"], text=True, capture_output=True).stdout
+    print("DIAG journal minio-0 :\n" + sortie)
 
 
 def verifier(condition, message):
@@ -145,6 +164,9 @@ def main():
         except (ForbiddenError, NoSuchNamespaceError) as erreur:
             verifier(True, f"principal trino : création de table refusée ({type(erreur).__name__})")
         verifier(spark.load_table(nom).scan().to_arrow().num_rows == 1500, "aucune écriture de trino n'a abouti")
+    except BaseException:
+        diagnostic()
+        raise
     finally:
         subprocess.run(["kubectl", "-n", NS, "scale", "sts/minio", "--replicas=4"], check=False)
         for processus in tunnels:
