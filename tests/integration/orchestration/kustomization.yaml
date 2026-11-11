@@ -71,6 +71,10 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: {name: DUREE_VIE_JOBS_S, value: "20"}
+      # planification arrêtée au départ : un run planifié à h+5 se mêlerait aux runs du test (le test l'active à la fin)
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLANIFICATIONS, value: arretees}
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests
         value: {cpu: 50m, memory: 384Mi}

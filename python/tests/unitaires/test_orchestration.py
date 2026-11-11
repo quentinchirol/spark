@@ -49,6 +49,17 @@ def test_planification_horaire():
     assert planif.cron_schedule == "5 * * * *"
     assert planif.job_name == "ventes"
     assert planif.execution_timezone == "Europe/Paris"
+    assert planif.default_status.value == "RUNNING"
+
+
+def test_planifications_arretees_pour_les_tests(monkeypatch):
+    monkeypatch.setenv("PLANIFICATIONS", "arretees")
+    try:
+        module = importlib.reload(orchestration)
+        assert module.defs.get_schedule_def("ventes_chaque_heure").default_status.value == "STOPPED"
+    finally:
+        monkeypatch.delenv("PLANIFICATIONS")
+        importlib.reload(orchestration)
 
 
 def test_parametres_job_kubernetes():

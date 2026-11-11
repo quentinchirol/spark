@@ -109,7 +109,11 @@ def ventes():
     ventes_gold(ventes_silver(ventes_bronze()))
 
 
+# planifications actives dès le déploiement ; PLANIFICATIONS=arretees (tests) : à activer dans l'interface ou l'API
+ETAT_PLANIFICATIONS = (DefaultScheduleStatus.STOPPED if os.environ.get("PLANIFICATIONS") == "arretees"
+                       else DefaultScheduleStatus.RUNNING)
+
 chaque_heure = ScheduleDefinition(name="ventes_chaque_heure", job=ventes, cron_schedule="5 * * * *",
-                                  execution_timezone="Europe/Paris", default_status=DefaultScheduleStatus.RUNNING)
+                                  execution_timezone="Europe/Paris", default_status=ETAT_PLANIFICATIONS)
 
 defs = Definitions(jobs=[ventes], schedules=[chaque_heure])

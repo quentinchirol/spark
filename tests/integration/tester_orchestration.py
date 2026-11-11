@@ -6,7 +6,12 @@
      aucun doublon ;
   3. échec provoqué PENDANT l'écriture de gold : l'étape est essayée 3 fois puis le run échoue ; la table gold n'a
      pas bougé (aucune donnée partielle) ; le run suivant, normal, rattrape ;
-  4. à la fin, plus aucun pod de traitement ni executor, et les Jobs Kubernetes disparaissent.
+  4. à la fin, plus aucun pod de traitement ni executor, et les Jobs Kubernetes disparaissent ;
+  5. dans Dagster : l'historique des runs et leur résultat ; la planification horaire s'active (prochain lancement
+     prévu) et les démons (planificateur, file d'attente) sont en bonne santé. Les runs du test sont lancés par
+     l'API : ils suivent le même chemin qu'un run planifié (file d'attente → démon → serveur de code → Jobs
+     Kubernetes), seul le déclencheur diffère. La planification est arrêtée pendant le test (PLANIFICATIONS=arretees,
+     tests/integration/orchestration) : un run planifié à h+5 se mêlerait aux runs vérifiés.
 
     echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
     python tests/integration/tester_orchestration.py     (cluster déployé : tests/integration/orchestration)
@@ -41,6 +46,30 @@ ETAT = """
 query($id: ID!) {
   runOrError(runId: $id) { __typename ... on Run { status startTime endTime } ... on RunNotFoundError { message } }
 }"""
+HISTORIQUE = """
+query {
+  runsOrError(filter: {pipelineName: "ventes"}, limit: 20) {
+    __typename ... on Runs { results { runId status } } ... on PythonError { message }
+  }
+}"""
+PLANIFICATION = """
+query($s: ScheduleSelector!) {
+  scheduleOrError(scheduleSelector: $s) {
+    __typename
+    ... on Schedule { cronSchedule executionTimezone scheduleState { status } futureTicks(limit: 1) { results { timestamp } } }
+    ... on ScheduleNotFoundError { message }
+    ... on PythonError { message }
+  }
+}"""
+ACTIVER = """
+mutation($s: ScheduleSelector!) {
+  startSchedule(scheduleSelector: $s) {
+    __typename ... on ScheduleStateResult { scheduleState { status } } ... on PythonError { message }
+    ... on UnauthorizedError { message } ... on ScheduleNotFoundError { message }
+  }
+}"""
+DEMONS = """
+query { instance { daemonHealth { allDaemonStatuses { daemonType healthy required } } } }"""
 EVENEMENTS = """
 query($id: ID!, $curseur: String) {
   logsForRun(runId: $id, afterCursor: $curseur, limit: 1000) {
@@ -211,6 +240,25 @@ def main():
                 break
             time.sleep(5)
         verifier(reste == (0, 0, 0), f"plus rien ne tourne (pods, executors, Jobs : {reste})")
+
+        print("5. Dagster : historique et résultat des runs, planification active, démons en bonne santé")
+        historique = graphql(client, HISTORIQUE)["runsOrError"]["results"]
+        statuts = {r["runId"]: r["status"] for r in historique}
+        attendu_runs = {run1: "SUCCESS", run2: "SUCCESS", run3: "FAILURE", run4: "SUCCESS"}
+        verifier(all(statuts.get(i) == s for i, s in attendu_runs.items()),
+                 f"les 4 runs et leur résultat dans l'historique ({len(historique)} run(s))")
+        selecteur = {"repositoryLocationName": SELECTEUR["repositoryLocationName"],
+                     "repositoryName": SELECTEUR["repositoryName"], "scheduleName": "ventes_chaque_heure"}
+        activation = graphql(client, ACTIVER, s=selecteur)["startSchedule"]
+        verifier(activation["__typename"] == "ScheduleStateResult", f"planification activée ({activation})")
+        planif = graphql(client, PLANIFICATION, s=selecteur)["scheduleOrError"]
+        verifier(planif["__typename"] == "Schedule" and planif["scheduleState"]["status"] == "RUNNING"
+                 and planif["cronSchedule"] == "5 * * * *" and planif["futureTicks"]["results"],
+                 f"planification ventes_chaque_heure active, prochain lancement prévu ({planif.get('cronSchedule')})")
+        demons = {d["daemonType"]: d["healthy"] for d in
+                  graphql(client, DEMONS)["instance"]["daemonHealth"]["allDaemonStatuses"] if d["required"]}
+        verifier(demons.get("SCHEDULER") and demons.get("QUEUED_RUN_COORDINATOR") and all(demons.values()),
+                 f"démons Dagster en bonne santé {demons}")
     finally:
         for t in tunnels:
             t.terminate()
