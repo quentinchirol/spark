@@ -6,6 +6,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: spark
 resources:
+  # namespace aussi déclaré ici : les opérateurs s'installent avant k8s/ (même objet que k8s/commun/namespace.yaml)
+  - namespace.yaml
   # PostgreSQL principal (Patroni) : docs/decisions/001-postgres-principal-zalando.md
   - postgres-operator/postgresql.crd.yaml
   - postgres-operator/operatorconfiguration.crd.yaml
