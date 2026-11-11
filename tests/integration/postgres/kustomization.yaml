@@ -1,0 +1,59 @@
+# PostgreSQL principal + stockage pour la CI : k8s/ sans Spark Connect, Trino ni le traitement planifié,
+# ressources réduites pour tenir sur un runner GitHub (2 cœurs, 7 Go). Nécessite k8s/operateurs.
+#   kubectl apply -k tests/integration/postgres
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../k8s
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: spark-connect
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: trino
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: pipeline-dashboard
+        namespace: spark
+  - target:
+      kind: postgresql
+      name: lake-principal
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests
+        value: {cpu: 50m, memory: 256Mi}
+      - op: replace
+        path: /spec/sidecars/0/resources/requests
+        value: {cpu: 25m, memory: 128Mi}
+      - op: replace
+        path: /spec/sidecars/0/env/0/value
+        value: 256MB
+      - op: replace
+        path: /spec/volume/size
+        value: 2Gi
+  - target:
+      kind: StatefulSet
+      name: minio
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 25m
+  - target:
+      kind: Deployment
+      name: polaris
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
