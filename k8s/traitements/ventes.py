@@ -99,5 +99,7 @@ def gold(spark):
 if __name__ == "__main__":
     etape = sys.argv[1]
     spark = SparkSession.builder.getOrCreate()
+    # journal du pilote lisible dans Dagster : avertissements et erreurs de Spark, et les lignes de ce script
+    spark.sparkContext.setLogLevel("WARN")
     {"bronze": bronze, "silver": silver, "gold": gold}[etape](spark)
     spark.stop()

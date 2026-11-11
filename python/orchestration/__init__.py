@@ -6,6 +6,9 @@ Décision : docs/decisions/002-dagster-sans-spark-operator.md
 
     dagster code-server start -h 0.0.0.0 -p 4000 -m orchestration
 """
+import collections
+import contextlib
+import io
 import os
 
 from dagster import (Backoff, Config, DefaultScheduleStatus, Definitions, OpExecutionContext, RetryPolicy,
@@ -54,10 +57,34 @@ def parametres_job(script: str, etape: str, echec: str = "") -> dict:
     }
 
 
+class JournalPilote(io.TextIOBase):
+    """Garde les dernières lignes du journal du pod pilote (execute_k8s_job les écrit sur la sortie standard)."""
+
+    def __init__(self, taille: int = 300):
+        self.lignes: collections.deque = collections.deque(maxlen=taille)
+        self._reste = ""
+
+    def write(self, texte: str) -> int:
+        *completes, self._reste = (self._reste + texte).split("\n")
+        self.lignes.extend(completes)
+        return len(texte)
+
+    def contenu(self) -> str:
+        lignes = [*self.lignes, self._reste] if self._reste else list(self.lignes)
+        return "\n".join(lignes[-self.lignes.maxlen:])
+
+
 def lancer_spark(context: OpExecutionContext, script: str, etape: str, echec: str = "") -> None:
     from dagster_k8s import execute_k8s_job
     context.log.info(f"{script} {etape} : tentative {context.retry_number + 1} sur 3")
-    execute_k8s_job(context=context, **parametres_job(script, etape, echec))
+    journal = JournalPilote()
+    try:
+        with contextlib.redirect_stdout(journal):
+            execute_k8s_job(context=context, **parametres_job(script, etape, echec))
+    except BaseException:
+        context.log.error(f"journal du pilote Spark ({etape}, fin) :\n{journal.contenu()}")
+        raise
+    context.log.info(f"journal du pilote Spark ({etape}, fin) :\n{journal.contenu()}")
 
 
 @op(retry_policy=RELANCES, description="Fichiers CSV de s3://sources/ventes → lake.bronze.ventes (une fois par fichier)")

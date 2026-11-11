@@ -3,6 +3,7 @@ import importlib
 
 import dagster_k8s
 import pytest
+from dagster import DagsterInstance
 
 import orchestration
 
@@ -89,3 +90,29 @@ def test_echec_definitif_apres_trois_essais(orch):
     # l'échec provoqué n'est transmis qu'à l'étape visée
     assert all("ECHEC=gold" in a[2]["env_vars"] for a in appels if a[0] == "gold")
     assert not any("ECHEC=gold" in a[2]["env_vars"] for a in appels if a[0] != "gold")
+
+
+def test_journal_du_pilote_recopie(orch, monkeypatch):
+    """Les lignes écrites par execute_k8s_job (journal du pod) arrivent dans le journal d'événements du run."""
+    module, _, echecs = orch
+
+    def bavard(context, **parametres):
+        print(f"pilote {parametres['args'][1]} : ligne 1")
+        print("ligne 2", end="")
+        if echecs.get(parametres["args"][1]):
+            raise RuntimeError("échec")
+
+    monkeypatch.setattr(dagster_k8s, "execute_k8s_job", bavard)
+    echecs["gold"] = 1
+    instance = DagsterInstance.ephemeral()
+    resultat = module.ventes.execute_in_process(raise_on_error=False, instance=instance)
+    messages = [e.user_message for e in instance.all_logs(resultat.run_id) if "journal du pilote" in e.user_message]
+    assert any("pilote silver : ligne 1\nligne 2" in m for m in messages)
+    assert any("pilote gold : ligne 1" in m for m in messages)
+
+
+def test_journal_garde_les_dernieres_lignes():
+    journal = orchestration.JournalPilote(taille=3)
+    journal.write("a\nb\nc\n")
+    journal.write("d\ne")
+    assert journal.contenu() == "c\nd\ne"

@@ -34,8 +34,9 @@ run_monitoring:
 retention:
   schedule:
     purge_after_days: 90
-# sorties brutes des étapes non conservées : tout ce qu'écrit une étape (dont le journal du pilote Spark) passe par
-# le journal d'événements, dans PostgreSQL, lisible depuis l'interface
+# sorties brutes des étapes non conservées (elles resteraient sur le disque du pod dagster-code, illisibles par
+# l'interface) : les 300 dernières lignes du journal de chaque pilote Spark sont recopiées dans le journal
+# d'événements du run (PostgreSQL), lisible depuis l'interface (python/orchestration)
 compute_logs:
   module: dagster.core.storage.noop_compute_log_manager
   class: NoOpComputeLogManager
