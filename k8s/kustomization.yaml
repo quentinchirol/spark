@@ -5,10 +5,8 @@ namespace: spark
 resources:
   - commun/namespace.yaml
   - commun/rbac.yaml
-  - stockage/seaweedfs.yaml
   - stockage/minio.yaml
   - stockage/polaris.yaml
-  - stockage/iceberg-rest.yaml
   - spark-connect/deployment.yaml
   - trino/deployment.yaml
   - pipeline/cronjob.yaml

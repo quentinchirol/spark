@@ -31,6 +31,7 @@ spec:
               cp /opt/spark/conf-template/* "$SPARK_CONF_DIR/"
               echo "spark.driver.host                $POD_IP" >> "$SPARK_CONF_DIR/spark-defaults.conf"
               echo "spark.kubernetes.driver.pod.name $POD_NAME" >> "$SPARK_CONF_DIR/spark-defaults.conf"
+              echo "spark.sql.catalog.lake.credential $POLARIS_CREDENTIAL" >> "$SPARK_CONF_DIR/spark-defaults.conf"
               echo "spark.kubernetes.container.image $SPARK_EXECUTOR_IMAGE" >> "$SPARK_CONF_DIR/spark-defaults.conf"
               echo "spark.kubernetes.container.image.pullPolicy $SPARK_EXECUTOR_PULL_POLICY" >> "$SPARK_CONF_DIR/spark-defaults.conf"
               exec /opt/spark/sbin/start-connect-server.sh
@@ -58,6 +59,8 @@ spec:
           envFrom:
             - secretRef:
                 name: s3-credentials   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY pour Iceberg
+            - secretRef:
+                name: polaris-spark    # POLARIS_CREDENTIAL (client:secret du principal spark)
           ports:
             - name: connect
               containerPort: 15002

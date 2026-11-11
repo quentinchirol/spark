@@ -47,6 +47,8 @@ spec:
             - secretRef:
                 name: s3-trino         # clé S3 en lecture seule (TRINO_S3_ACCESS_KEY / TRINO_S3_SECRET_KEY)
             - secretRef:
+                name: polaris-trino    # POLARIS_CREDENTIAL (client:secret du principal trino, lecture seule)
+            - secretRef:
                 name: trino-secrets    # TRINO_SHARED_SECRET
           ports:
             - name: http
