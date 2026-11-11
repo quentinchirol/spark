@@ -7,3 +7,8 @@ images:
     kind: Deployment
   - path: spec/jobTemplate/spec/template/spec/containers/env/value
     kind: CronJob
+  # cluster PostgreSQL de l'opérateur Zalando : image de PostgreSQL et du sidecar pgduck_server
+  - path: spec/dockerImage
+    kind: postgresql
+  - path: spec/sidecars/image
+    kind: postgresql

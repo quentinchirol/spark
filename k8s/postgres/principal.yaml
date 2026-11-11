@@ -1,0 +1,96 @@
+# PostgreSQL principal : reçoit les écritures de l'application (table chaude), les fusionne chaque minute
+# dans les tables Iceberg app.* (pg_lake, catalogue Polaris) et sert la vue « chaud + froid » à l'application.
+# Géré par l'opérateur Zalando (k8s/operateurs, Patroni) : docs/decisions/001-postgres-principal-zalando.md
+#   - 3 instances, réplication SYNCHRONE : une écriture confirmée est sur 2 instances ; en cas de panne,
+#     Patroni ne promeut qu'une réplique synchrone (aucune écriture confirmée perdue) ;
+#   - pgduck_server (moteur DuckDB de pg_lake) en sidecar, joint par le socket /tmp/.s.PGSQL.5332 ;
+#   - base « lake » : pg_lake utilise le nom de la base comme catalogue REST, égal au catalogue Polaris « lake ».
+# Services créés par l'opérateur : lake-principal (primaire, écriture), lake-principal-repl (répliques).
+# Mot de passe du superutilisateur : Secret postgres.lake-principal.credentials.postgresql.acid.zalan.do
+apiVersion: acid.zalan.do/v1
+kind: postgresql
+metadata:
+  name: lake-principal
+spec:
+  teamId: lake
+  # image Spilo 17 + pg_lake (image/postgres-lake) ; GKE : remplacée par ghcr.io (k8s/config-kustomize)
+  dockerImage: postgres-lake:17
+  numberOfInstances: 3
+  # PostgreSQL et le sidecar tournent sous l'utilisateur postgres de Spilo : même propriétaire pour le socket
+  spiloRunAsUser: 101
+  spiloRunAsGroup: 103
+  spiloFSGroup: 103
+  volume:
+    size: 10Gi
+  users:
+    lake_app: []          # rôle de l'application (FastAPI) : lecture des vues, écriture via le writer (US-6)
+  databases:
+    lake: lake_app
+  postgresql:
+    version: "17"
+    parameters:
+      # liste de Spilo + pg_extension_base (pg_lake)
+      shared_preload_libraries: "bg_mon,pg_stat_statements,pgextwlist,pg_auth_mon,set_user,pg_cron,pg_extension_base"
+      cron.database_name: lake
+      # emplacement des tables Iceberg créées par pg_lake (sous le bucket autorisé dans Polaris)
+      pg_lake_iceberg.default_location_prefix: s3://warehouse/postgres
+      # statement_timeout de 2 s : posé sur le rôle de l'application seulement (sql/), pas sur la fusion
+  patroni:
+    synchronous_mode: true
+    # non strict : si plus aucune réplique n'est disponible, le primaire continue seul plutôt que de bloquer
+    # toutes les écritures (le cas est surveillé ; voir US-18 et US-20)
+    synchronous_mode_strict: false
+    synchronous_node_count: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  additionalVolumes:
+    # socket de pgduck_server partagé entre PostgreSQL et le sidecar
+    - name: pgduck
+      mountPath: /tmp
+      targetContainers:
+        - postgres
+        - pgduck
+      volumeSource:
+        emptyDir: {}
+  sidecars:
+    - name: pgduck
+      image: postgres-lake:17
+      command:
+        - /bin/sh
+        - -c
+        - |
+          # identifiants S3 de MinIO pour DuckDB : fichier dans le volume du pod, jamais dans l'image
+          umask 077
+          mkdir -p /tmp/pgduck-cache
+          printf "CREATE SECRET minio (TYPE S3, KEY_ID '%s', SECRET '%s', ENDPOINT 'minio:9000', URL_STYLE 'path', USE_SSL false, REGION 'us-east-1', SCOPE 's3://warehouse');\n" \
+            "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > /tmp/pgduck-init.sql
+          exec /usr/lib/postgresql/17/bin/pgduck_server \
+            --memory_limit "$PGDUCK_MEMORY_LIMIT" \
+            --cache_dir /tmp/pgduck-cache \
+            --init_file_path /tmp/pgduck-init.sql
+      env:
+        # mémoire maximale de DuckDB : sans limite, il prend 80 % de la mémoire du nœud
+        - name: PGDUCK_MEMORY_LIMIT
+          value: 1GB
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: AWS_SECRET_ACCESS_KEY
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "2"
+          memory: 1536Mi

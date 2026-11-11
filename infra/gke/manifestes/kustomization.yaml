@@ -18,5 +18,8 @@ images:
   - name: lakehouse-pipeline
     newName: ghcr.io/quentinchirol/lakehouse-pipeline
     newTag: develop
+  - name: postgres-lake
+    newName: ghcr.io/quentinchirol/postgres-lake
+    newTag: develop
 patches:
   - path: telechargement-images.yaml

@@ -14,14 +14,19 @@ fi
 echo "==> Construction des images"
 docker build -t spark-lakehouse:4.1.3 image
 docker build -t lakehouse-pipeline:1.0 python
+docker build -t postgres-lake:17 image/postgres-lake
 
 echo "==> Chargement des images dans le cluster (pullPolicy: Never)"
-kind load docker-image --name "$CLUSTER" spark-lakehouse:4.1.3 lakehouse-pipeline:1.0
+kind load docker-image --name "$CLUSTER" spark-lakehouse:4.1.3 lakehouse-pipeline:1.0 postgres-lake:17
 
 if [ -x scripts/generer-secrets.sh ]; then
   echo "==> Secrets locaux (générés seulement s'ils manquent)"
   scripts/generer-secrets.sh --si-absents
 fi
+
+echo "==> Opérateurs (leurs CRD doivent exister avant le reste)"
+kubectl apply --server-side -k k8s/operateurs
+kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do --timeout=2m
 
 echo "==> Déploiement"
 kubectl apply -k k8s

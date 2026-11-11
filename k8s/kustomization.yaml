@@ -10,6 +10,8 @@ resources:
   - spark-connect/deployment.yaml
   - trino/deployment.yaml
   - pipeline/cronjob.yaml
+  # PostgreSQL principal (nécessite k8s/operateurs appliqué avant)
+  - postgres/principal.yaml
 # images désignées dans des variables d'environnement (image des executors Spark)
 configurations:
   - config-kustomize/images-env.yaml
