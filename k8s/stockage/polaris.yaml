@@ -1,0 +1,242 @@
+# Catalogue Iceberg : Apache Polaris (API REST Iceberg + droits par rôle), 2 pods.
+# Il remplace iceberg-rest-fixture (SQLite, 1 pod, sans droits). L'état du catalogue est dans
+# PostgreSQL (polaris-db) : les deux pods lisent et écrivent la même base.
+# Spark (rôle écriture) et Trino (rôle lecture seule) s'authentifient en OAuth2 ; PostgreSQL + pg_lake
+# lira les mêmes tables via ce catalogue (US-7).
+# Ordre de démarrage : polaris-db → Job polaris-bootstrap (schéma + compte root) → polaris →
+# Job polaris-init (catalogue « lake », rôles, principaux spark et trino).
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris-db
+spec:
+  selector:
+    app: polaris-db
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: polaris-db
+spec:
+  serviceName: polaris-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: polaris-db
+  template:
+    metadata:
+      labels:
+        app: polaris-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - name: POSTGRES_DB
+              value: polaris
+            - name: POSTGRES_USER
+              value: polaris
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: POLARIS_DB_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: pg
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "polaris", "-d", "polaris"]
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-bootstrap
+spec:
+  # crée le schéma et le compte root dans la base (une seule fois ; relancer le Job sur une base déjà
+  # initialisée est refusé par l'outil : supprimer le Job termine proprement l'opération)
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: apache/polaris-admin-tool:1.8.0
+          args:
+            - bootstrap
+            - --realm=POLARIS
+            - --credential=POLARIS,$(POLARIS_ROOT_CLIENT_ID),$(POLARIS_ROOT_CLIENT_SECRET)
+          env:
+            - name: POLARIS_PERSISTENCE_TYPE
+              value: relational-jdbc
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://polaris-db:5432/polaris
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: polaris
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: POLARIS_DB_PASSWORD
+          envFrom:
+            - secretRef:
+                name: polaris-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polaris
+spec:
+  selector:
+    app: polaris
+  ports:
+    - name: http
+      port: 8181
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polaris
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: polaris
+  template:
+    metadata:
+      labels:
+        app: polaris
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: polaris
+      containers:
+        - name: polaris
+          image: apache/polaris:1.8.0
+          env:
+            - name: POLARIS_PERSISTENCE_TYPE
+              value: relational-jdbc
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://polaris-db:5432/polaris
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: polaris
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-secrets
+                  key: POLARIS_DB_PASSWORD
+            # même paire de clés sur les 2 pods : un jeton émis par l'un est accepté par l'autre
+            - name: POLARIS_AUTHENTICATION_TOKEN_BROKER_TYPE
+              value: rsa-key-pair
+            - name: POLARIS_AUTHENTICATION_TOKEN_BROKER_RSA_KEY_PAIR_PRIVATE_KEY_FILE
+              value: /etc/polaris-keys/polaris-private.pem
+            - name: POLARIS_AUTHENTICATION_TOKEN_BROKER_RSA_KEY_PAIR_PUBLIC_KEY_FILE
+              value: /etc/polaris-keys/polaris-public.pem
+            - name: AWS_REGION
+              value: us-east-1
+          envFrom:
+            - secretRef:
+                name: s3-credentials   # clé S3 « spark » : Polaris vérifie et écrit les métadonnées dans MinIO
+          ports:
+            - name: http
+              containerPort: 8181
+            - name: management
+              containerPort: 8182
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: management
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: management
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          volumeMounts:
+            - name: keys
+              mountPath: /etc/polaris-keys
+              readOnly: true
+      volumes:
+        - name: keys
+          secret:
+            secretName: polaris-keys
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: polaris
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: polaris
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-init
+spec:
+  # crée (si absent) le catalogue « lake » sur MinIO, les rôles et les principaux spark / trino ;
+  # peut être relancé sans effet de bord (script : ConfigMap polaris-init)
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: python:3.12-alpine
+          command: ["python", "/script/init.py"]
+          envFrom:
+            - secretRef:
+                name: polaris-secrets
+          env:
+            - name: SPARK_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-spark
+                  key: POLARIS_CREDENTIAL
+            - name: TRINO_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-trino
+                  key: POLARIS_CREDENTIAL
+          volumeMounts:
+            - name: script
+              mountPath: /script
+      volumes:
+        - name: script
+          configMap:
+            name: polaris-init

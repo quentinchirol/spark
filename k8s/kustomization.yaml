@@ -7,6 +7,7 @@ resources:
   - commun/rbac.yaml
   - stockage/seaweedfs.yaml
   - stockage/minio.yaml
+  - stockage/polaris.yaml
   - stockage/iceberg-rest.yaml
   - spark-connect/deployment.yaml
   - trino/deployment.yaml
@@ -15,6 +16,10 @@ resources:
 configurations:
   - config-kustomize/images-env.yaml
 configMapGenerator:
+  # script d'initialisation de Polaris (Job polaris-init)
+  - name: polaris-init
+    files:
+      - init.py=stockage/polaris-init.py
   - name: spark-conf
     files:
       - spark-connect/spark-defaults.conf
