@@ -75,3 +75,8 @@ def test_un_rejet_n_empeche_pas_les_autres_messages():
 
 def test_tables_citees_ignore_les_messages_invalides():
     assert tables_citees([message(table="clients"), Message(key=b"x", value=b"{")]) == {"clients"}
+
+
+def test_table_critique_rejetee_par_le_chemin_kafka():
+    lot = preparer([message(table="paiements"), message(offset=2)], {"ventes", "paiements"}, frozenset({"paiements"}))
+    assert lot.nb_valides == 1 and "critique" in lot.rejets[0].raison

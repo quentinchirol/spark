@@ -44,7 +44,9 @@ class Lot:
         return sum(len(messages) for messages in self.par_table.values())
 
 
-def preparer(messages: Iterable[MessageKafka], tables_connues: set[str]) -> Lot:
+def preparer(messages: Iterable[MessageKafka], tables_connues: set[str],
+             tables_critiques: frozenset[str] = frozenset()) -> Lot:
+    """tables_critiques : tables écrites uniquement par le chemin synchrone (POST /ecritures/critiques)."""
     lot = Lot()
     for message in messages:
         try:
@@ -57,6 +59,9 @@ def preparer(messages: Iterable[MessageKafka], tables_connues: set[str]) -> Lot:
             continue
         if ecriture.table not in tables_connues:
             lot.rejets.append(Rejet(message, f"table inconnue : {ecriture.table} (lake.creer_table)"))
+            continue
+        if ecriture.table in tables_critiques:
+            lot.rejets.append(Rejet(message, f"table critique : {ecriture.table} s'écrit par POST /ecritures/critiques"))
             continue
         lot.par_table.setdefault(ecriture.table, []).append(Ligne({
             "id": str(ecriture.id),
