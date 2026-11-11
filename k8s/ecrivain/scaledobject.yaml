@@ -1,6 +1,8 @@
 # Nombre de writers selon le retard du groupe pg-writer sur le topic « app » (KEDA, k8s/operateurs/keda) :
 # un writer de plus par tranche de 50 000 messages en attente, de 2 à 24 (= nombre de partitions : au-delà,
 # un writer n'aurait aucune partition). Retour à 2 quand le calme revient (après 2 min sans retard).
+# Avec un minimum > 0, c'est le HPA créé par KEDA qui décide (toutes les 15 s) : pollingInterval et
+# cooldownPeriod n'auraient pas d'effet ; le retour au calme se règle par stabilizationWindowSeconds.
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -10,8 +12,6 @@ spec:
     name: ecrivain
   minReplicaCount: 2
   maxReplicaCount: 24
-  pollingInterval: 10
-  cooldownPeriod: 120
   advanced:
     horizontalPodAutoscalerConfig:
       behavior:
@@ -21,7 +21,8 @@ spec:
   triggers:
     - type: kafka
       metadata:
-        bootstrapServers: lakehouse-kafka-bootstrap:9092
+        # nom complet : l'opérateur KEDA tourne dans le namespace « keda » (constaté en CI : nom court introuvable)
+        bootstrapServers: lakehouse-kafka-bootstrap.spark.svc:9092
         consumerGroup: pg-writer
         topic: app
         lagThreshold: "50000"

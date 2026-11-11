@@ -22,7 +22,7 @@ from commun import kubectl, tunnel, verifier
 
 TABLE, RAFALE, PORT = "commandes", "rafale", 18000
 NB_LIGNES, NB_MAJ, NB_SUPPR = 1500, 1500, 300
-NB_RAFALE = 40000
+NB_RAFALE = 60000
 
 # producteur lancé DANS le cluster (image du writer, qui contient aiokafka) : bien plus rapide que le port-forward,
 # il crée un vrai retard que KEDA doit résorber en ajoutant des writers
