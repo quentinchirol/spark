@@ -1,5 +1,7 @@
-# Tests d'intégration sur un vrai cluster Kubernetes (kind) : démarre MinIO (4 pods) + Polaris (2 pods)
-# et vérifie le comportement réel : table lisible, 1 pod MinIO arrêté, droits du principal trino.
+# Tests d'intégration sur un vrai cluster Kubernetes (kind), un job par sujet :
+#   - stockage : MinIO (4 pods) + Polaris (2 pods) : table lisible, 1 pod MinIO arrêté, droits du principal trino ;
+#   - postgres : PostgreSQL principal (Zalando + pg_lake) : réplication synchrone, vue chaud + froid,
+#                fusion planifiée vers Iceberg, lecture des mêmes lignes par un autre moteur via Polaris.
 # Voir tests/integration/. Se lance sur les changements du stockage et à la demande.
 name: Integration
 
@@ -9,6 +11,7 @@ on:
     paths:
       - "k8s/**"
       - "tests/integration/**"
+      - "image/postgres-lake/**"
       - "scripts/generer-secrets.sh"
       - ".github/workflows/integration.yml"
   push:
@@ -59,3 +62,59 @@ jobs:
             echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
           done
           kubectl -n spark describe pods | tail -150 || true
+
+  postgres:
+    name: PostgreSQL principal · Zalando + pg_lake sur kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Construire l'image PostgreSQL + pg_lake
+        uses: docker/build-push-action@v6
+        with:
+          context: image/postgres-lake
+          load: true
+          tags: postgres-lake:18
+          cache-from: type=gha,scope=postgres-lake
+          cache-to: type=gha,mode=max,scope=postgres-lake
+      - uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: lakehouse
+      - name: Charger l'image dans kind
+        run: kind load docker-image postgres-lake:18 --name lakehouse
+      - name: Secrets de test
+        run: scripts/generer-secrets.sh --si-absents
+      - name: Opérateur PostgreSQL
+        run: |
+          kubectl apply --server-side -k k8s/operateurs
+          kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do --timeout=120s
+          kubectl -n spark rollout status deploy/postgres-operator --timeout=240s
+      - name: Déployer stockage + PostgreSQL
+        run: kubectl apply -k tests/integration/postgres
+      - name: Attendre MinIO, Polaris, PostgreSQL et le schéma
+        run: |
+          kubectl -n spark rollout status sts/minio --timeout=240s
+          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=300s
+          kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=600s
+          kubectl -n spark wait --for=condition=complete job/lake-schema --timeout=300s
+          kubectl -n spark get pods -o wide
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test d'intégration
+        run: |
+          echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
+          pip install "pyiceberg[pyarrow]"
+          python tests/integration/tester_postgres.py
+      - name: Diagnostic en cas d'échec
+        if: failure() || cancelled()
+        run: |
+          kubectl -n spark get pods,jobs,postgresql -o wide || true
+          for r in deploy/postgres-operator job/lake-schema job/polaris-init deploy/polaris; do
+            echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
+          done
+          for p in $(kubectl -n spark get pods -l cluster-name=lake-principal -o name); do
+            echo "::group::logs $p"; kubectl -n spark logs "$p" --all-containers --tail=120 --prefix || true; echo "::endgroup::"
+          done
+          kubectl -n spark describe pods -l cluster-name=lake-principal | tail -80 || true

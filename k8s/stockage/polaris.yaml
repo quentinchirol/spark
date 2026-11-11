@@ -239,6 +239,11 @@ spec:
                 secretKeyRef:
                   name: polaris-trino
                   key: POLARIS_CREDENTIAL
+            - name: POSTGRES_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-postgres
+                  key: POLARIS_CREDENTIAL
           volumeMounts:
             - name: script
               mountPath: /script

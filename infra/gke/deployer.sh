@@ -34,6 +34,10 @@ fi
 echo "==> Secrets de la plateforme (générés seulement s'ils n'existent pas)"
 scripts/generer-secrets.sh --si-absents
 
+echo "==> Opérateurs (leurs CRD doivent exister avant le reste)"
+kubectl apply --server-side -k k8s/operateurs
+kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do --timeout=2m
+
 echo "==> Manifestes (infra/gke/manifestes, images en version $TAG)"
 # kustomization temporaire : fixe l'étiquette sans modifier les fichiers versionnés
 travail=$(mktemp -d infra/gke/.deploiement-XXXXXX)
@@ -48,6 +52,8 @@ images:
     newTag: $TAG
   - name: ghcr.io/quentinchirol/lakehouse-pipeline
     newTag: $TAG
+  - name: ghcr.io/quentinchirol/postgres-lake
+    newTag: $TAG
 EOF
 # les Jobs d'initialisation sont relançables sans effet de bord, mais leur spécification est
 # immutable : on les recrée à chaque déploiement. polaris-bootstrap n'est PAS recréé (l'outil
@@ -58,6 +64,7 @@ kubectl apply -k "$travail"
 echo "==> Attente des composants"
 kubectl -n "$NS" rollout status sts/minio --timeout=10m
 kubectl -n "$NS" wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=10m
+kubectl -n "$NS" wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=15m
 for d in polaris spark-connect trino; do
   kubectl -n "$NS" rollout status "deploy/$d" --timeout=10m
 done

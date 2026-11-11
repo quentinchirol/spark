@@ -1,4 +1,4 @@
-"""Initialise Polaris : catalogue « lake » sur MinIO, rôles, principaux spark et trino.
+"""Initialise Polaris : catalogue « lake » sur MinIO, rôles, principaux spark, trino et postgres.
 
 Exécuté par le Job polaris-init. Idempotent : une ressource déjà présente (HTTP 409) est conservée,
 et les identifiants des principaux sont remis aux valeurs des Secrets à chaque exécution.
@@ -100,7 +100,8 @@ def main():
     ], jeton, "lecture")
 
     # principaux : un par moteur, avec des identifiants fixés par les Secrets Kubernetes
-    for nom, variable, role in (("spark", "SPARK_CREDENTIAL", "ecriture"), ("trino", "TRINO_CREDENTIAL", "lecture")):
+    for nom, variable, role in (("spark", "SPARK_CREDENTIAL", "ecriture"), ("trino", "TRINO_CREDENTIAL", "lecture"),
+                                ("postgres", "POSTGRES_CREDENTIAL", "ecriture")):
         identifiant, secret = os.environ[variable].split(":", 1)
         creer("/management/v1/principals", {"principal": {"name": nom}}, jeton, f"principal {nom}")
         statut, reponse = appeler("POST", f"/management/v1/principals/{nom}/reset",
