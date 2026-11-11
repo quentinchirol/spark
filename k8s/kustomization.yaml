@@ -65,3 +65,25 @@ secretGenerator:
   - name: trino-tls
     files:
       - secrets/trino-tls.pem
+  # administrateur MinIO (création du bucket et des utilisateurs spark / trino)
+  - name: minio-root
+    envs:
+      - secrets/minio-root.env
+  # Polaris : compte root + mot de passe de la base du catalogue
+  - name: polaris-secrets
+    envs:
+      - secrets/polaris.env
+  # identifiants OAuth2 de Spark (écriture) et de Trino (lecture seule) dans Polaris
+  - name: polaris-spark
+    envs:
+      - secrets/polaris-spark.env
+    options:
+      disableNameSuffixHash: true
+  - name: polaris-trino
+    envs:
+      - secrets/polaris-trino.env
+  # clés de signature des jetons Polaris (identiques sur les 2 pods)
+  - name: polaris-keys
+    files:
+      - secrets/polaris-private.pem
+      - secrets/polaris-public.pem
