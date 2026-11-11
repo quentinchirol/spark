@@ -11,13 +11,16 @@ spark/
 │   └── data/             monté dans /opt/spark-data
 ├── image/                image spark-lakehouse:4.1.3 (serveur et executors)
 │   ├── Dockerfile        Spark 4.1.3 + jars Iceberg + extension Java
-│   └── src/fr/spark/auth/  TokenAuthInterceptor (tokens), AuditListener (audit)
+│   ├── src/fr/spark/auth/  TokenAuthInterceptor (tokens), AuditListener (audit)
+│   └── postgres-lake/    image PostgreSQL 18 (Spilo) + pg_lake du PostgreSQL principal
 ├── k8s/                  déploiement Kubernetes : kubectl apply -k k8s
 │   ├── kustomization.yaml
 │   ├── commun/           namespace, droits (RBAC)
 │   ├── spark-connect/    serveur : deployment.yaml, spark-defaults.conf, fairscheduler.xml
 │   ├── stockage/         minio.yaml (S3, 4 pods), polaris.yaml (catalogue, 2 pods + PostgreSQL), polaris-init.py
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
+│   ├── postgres/         PostgreSQL principal (3 instances synchrones) + sql/ : modèle chaud + froid
+│   ├── operateurs/       opérateur Zalando postgres-operator : kubectl apply --server-side -k k8s/operateurs (avant k8s/)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
 │   ├── config-kustomize/ images désignées dans des variables (image des executors)
 │   └── secrets/          tokens, clés S3, token pipeline, certificat Trino  (non versionnés)
@@ -25,7 +28,7 @@ spark/
 │   ├── creer-cluster.sh, supprimer-cluster.sh, deployer.sh
 │   └── manifestes/       overlay kustomize de k8s/ pour GKE
 ├── contrats/             contrat d'écriture application → lakehouse (JSON Schema)
-├── docs/                 documentation (contrat-ecriture.md…)
+├── docs/                 documentation (contrat d'écriture, PostgreSQL principal, décisions…)
 ├── .github/workflows/    CI (lint, tests, manifestes, images) ; publication des images (images.yml)
 ├── .devcontainer/        environnement prêt pour GitHub Codespaces
 ├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
@@ -147,10 +150,14 @@ Arrêter : `docker compose -f compose/docker-compose.yml down`
 ```bash
 docker build -t spark-lakehouse:4.1.3 image
 docker build -t lakehouse-pipeline:1.0 python
+docker build -t postgres-lake:18 image/postgres-lake
 
 # secrets locaux (k8s/secrets/ n'est jamais versionné) : crée seulement les fichiers manquants
 scripts/generer-secrets.sh
 
+# opérateurs d'abord : leurs CRD doivent exister avant le reste
+kubectl apply --server-side -k k8s/operateurs
+kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do
 kubectl apply -k k8s
 ```
 
@@ -196,6 +203,13 @@ kubectl -n spark rollout restart sts/minio deploy/polaris deploy/trino deploy/sp
 
 Après une rotation, les anciennes clés et anciens tokens ne fonctionnent plus : redistribuez les nouveaux
 tokens (`k8s/secrets/tokens`) et le certificat (`k8s/secrets/trino-cert.pem`).
+
+## PostgreSQL principal : écritures de l'application
+
+`lake-principal` (base `lake`) : 3 instances PostgreSQL 18 en réplication synchrone (opérateur Zalando), extension
+pg_lake. L'application lit `vue.<table>` (dernier état, visible tout de suite) ; chaque minute, la table chaude est
+fusionnée dans la table Iceberg `app.<table>`, lue par Spark, Trino et le pool analytique. Détails :
+[docs/postgres-principal.md](docs/postgres-principal.md).
 
 ## Stockage et catalogue : MinIO + Polaris
 
