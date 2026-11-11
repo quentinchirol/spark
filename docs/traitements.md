@@ -75,7 +75,15 @@ kustomize comme les autres images).
 
 ## Mesuré en CI (kind, runner GitHub à 2 cœurs)
 
-`tests/integration/tester_orchestration.py`, à chaque pull request qui touche ces fichiers : contenu exact des trois
-tables, nouveau fichier chargé sans doublon, échec provoqué pendant l'écriture de gold → 3 tentatives puis échec,
-snapshot gold inchangé, rattrapage au run suivant ; plus aucun pod ni Job à la fin. Durées : voir le journal du
-workflow Integration (job « orchestration »).
+`tests/integration/tester_orchestration.py`, à chaque pull request qui touche ces fichiers :
+
+| Vérifié | Résultat |
+|---------|----------|
+| run complet (3 étapes, chacune : pod pilote + executor créés puis supprimés) | réussi en **~2 min 40** (161 s, puis 151 s) |
+| contenu de bronze / silver / gold | exact (lignes invalides écartées, vente corrigée mise à jour, aucun doublon) |
+| nouveau fichier | seul lui est chargé |
+| échec provoqué pendant l'écriture de gold | 3 tentatives puis échec (317 s) ; snapshot gold **inchangé** ; le run suivant rattrape |
+| après les runs | 0 pod pilote, 0 executor, 0 Job |
+| Dagster | 4 runs et leur résultat dans l'historique ; planification active ; démons en bonne santé |
+
+Sur kind, l'essentiel de la durée est le démarrage des JVM (pilote puis executor) à chaque étape.
