@@ -38,9 +38,9 @@ jobs:
         run: kubectl apply -k tests/integration/stockage
       - name: Attendre MinIO, les Jobs d'initialisation et Polaris
         run: |
-          kubectl -n spark rollout status sts/minio --timeout=600s
-          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=900s
-          kubectl -n spark rollout status deploy/polaris --timeout=600s
+          kubectl -n spark rollout status sts/minio --timeout=240s
+          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=300s
+          kubectl -n spark rollout status deploy/polaris --timeout=240s
           kubectl -n spark get pods -o wide
       - uses: actions/setup-python@v5
         with:
@@ -50,7 +50,7 @@ jobs:
           pip install "pyiceberg[pyarrow]"
           python tests/integration/tester_stockage.py
       - name: Diagnostic en cas d'échec
-        if: failure()
+        if: failure() || cancelled()
         run: |
           kubectl -n spark get pods,jobs -o wide || true
           for r in sts/minio deploy/polaris job/minio-init job/polaris-bootstrap job/polaris-init sts/polaris-db; do
