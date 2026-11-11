@@ -19,10 +19,14 @@ spark/
 │   ├── stockage/         seaweedfs.yaml (S3), iceberg-rest.yaml (catalogue)
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
+│   ├── config-kustomize/ images désignées dans des variables (image des executors)
 │   └── secrets/          tokens, clés S3, token pipeline, certificat Trino  (non versionnés)
+├── infra/gke/            cluster GKE 3 zones + déploiement avec les images de ghcr.io
+│   ├── creer-cluster.sh, supprimer-cluster.sh, deployer.sh
+│   └── manifestes/       overlay kustomize de k8s/ pour GKE
 ├── contrats/             contrat d'écriture application → lakehouse (JSON Schema)
 ├── docs/                 documentation (contrat-ecriture.md…)
-├── .github/workflows/    CI : lint, tests unitaires, manifestes, images
+├── .github/workflows/    CI (lint, tests, manifestes, images) ; publication des images (images.yml)
 ├── .devcontainer/        environnement prêt pour GitHub Codespaces
 ├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
 └── python/               tests et benchmark
@@ -49,6 +53,10 @@ Chaque user story est développée sur sa propre branche, puis fusionnée dans `
 | `python`     | lint (`ruff`), compilation, tests unitaires sans cluster (`python/tests/unitaires`) |
 | `manifestes` | chaque `kustomization.yaml` se construit et respecte les schémas Kubernetes (`kubeconform`) |
 | `images`     | les images Docker se construisent                                          |
+
+**Images** (`.github/workflows/images.yml`, à chaque push sur `develop` et `main`) : publication de
+`ghcr.io/quentinchirol/spark-lakehouse` et `ghcr.io/quentinchirol/lakehouse-pipeline`, étiquetées
+par branche (`develop`, `main`) et par commit (`sha-1a2b3c4`).
 
 **Codespaces** : *Code → Codespaces → Create codespace* sur le dépôt (machine 4 cœurs / 16 Go minimum).
 Python, Java 21, Docker, kubectl, Helm et kind sont installés. Pour lancer toute la stack :
@@ -148,6 +156,32 @@ kubectl apply -k k8s
 
 Les tables Iceberg et le catalogue sont sur des volumes persistants : ils survivent aux
 redémarrages des pods (mais pas à `kubectl delete -k k8s`, qui supprime les volumes).
+
+L'image des executors n'est écrite nulle part en dur : c'est toujours celle du serveur Spark Connect
+(variable `SPARK_EXECUTOR_IMAGE`, mise à jour par kustomize en même temps que l'image du conteneur).
+
+## Déployer sur GKE (3 zones)
+
+Cluster régional : nœuds répartis sur 3 zones, plus un groupe de nœuds **analytique** réservé
+(taint `role=analytique:NoSchedule`, vide tant qu'il ne sert pas). Les images viennent de ghcr.io,
+aucune n'est construite sur un nœud.
+
+```bash
+# 1. cluster (idempotent ; région par défaut europe-west9 = Paris)
+PROJET=mon-projet-gcp infra/gke/creer-cluster.sh
+
+# 2. plateforme : jeton GitHub « classic » avec le seul droit read:packages (premier déploiement)
+read -rs GHCR_TOKEN && export GHCR_TOKEN
+GHCR_USER=quentinchirol infra/gke/deployer.sh
+
+# version figée plutôt que la dernière image de develop
+TAG=sha-1a2b3c4 infra/gke/deployer.sh
+```
+
+Vérifier : `kubectl get nodes -L topology.kubernetes.io/zone,role` (3 zones) et
+`gcloud container node-pools list --cluster lakehouse --region europe-west9` (groupe `analytique`).
+`deployer.sh` échoue si un pod utilise encore une image locale (`imagePullPolicy: Never`).
+Supprimer : `PROJET=mon-projet-gcp infra/gke/supprimer-cluster.sh`.
 
 ## Secrets et rotation
 

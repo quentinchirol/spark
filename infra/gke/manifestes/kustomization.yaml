@@ -1,0 +1,22 @@
+# Déploiement sur GKE : mêmes manifestes que k8s/, images tirées de ghcr.io.
+#   infra/gke/deployer.sh                 (étiquette develop)
+#   TAG=sha-1a2b3c4 infra/gke/deployer.sh (version figée, recommandé hors développement)
+# Les images sont publiées par .github/workflows/images.yml. Le registre étant privé,
+# les pods utilisent le secret ghcr-pull (créé par deployer.sh, jamais versionné).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: spark
+resources:
+  - ../../../k8s
+  # compte « default » : utilisé par les executors Spark et le traitement planifié
+  - serviceaccount-default.yaml
+images:
+  # la variable SPARK_EXECUTOR_IMAGE suit automatiquement (k8s/config-kustomize/images-env.yaml)
+  - name: spark-lakehouse
+    newName: ghcr.io/quentinchirol/spark-lakehouse
+    newTag: develop
+  - name: lakehouse-pipeline
+    newName: ghcr.io/quentinchirol/lakehouse-pipeline
+    newTag: develop
+patches:
+  - path: telechargement-images.yaml

@@ -1,7 +1,7 @@
 # Intégration continue : à chaque push et à chaque pull request vers develop ou main.
 #   - python      : lint (ruff), compilation, tests unitaires (sans cluster)
 #   - manifestes  : kustomize build + validation des schémas Kubernetes (kubeconform)
-#   - images      : construction des images Docker (sans publication)
+#   - images      : construction des images Docker (publication : workflow « Images »)
 # Les tests d'intégration (cluster complet) tournent dans le workflow « integration ».
 name: CI
 
@@ -88,7 +88,8 @@ jobs:
       - name: Construire et valider chaque kustomization
         run: |
           set -euo pipefail
-          for k in $(find k8s -name kustomization.yaml -not -path '*/composants/*' | sort); do
+          # k8s/ = manifestes de base ; infra/*/manifestes = overlays par environnement (GKE…)
+          for k in $(find k8s infra -name kustomization.yaml -not -path '*/composants/*' | sort); do
             dossier=$(dirname "$k")
             echo "::group::$dossier"
             kubectl kustomize "$dossier" > /tmp/rendu.yaml

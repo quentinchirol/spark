@@ -10,6 +10,9 @@ resources:
   - spark-connect/deployment.yaml
   - trino/deployment.yaml
   - pipeline/cronjob.yaml
+# images désignées dans des variables d'environnement (image des executors Spark)
+configurations:
+  - config-kustomize/images-env.yaml
 configMapGenerator:
   - name: spark-conf
     files:
