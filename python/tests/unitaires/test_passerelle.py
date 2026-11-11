@@ -1,6 +1,7 @@
 """Passerelle d'écriture : codes de réponse du contrat (202, 422, 503), message publié avec la clé = id."""
 import asyncio
 import json
+import time
 import uuid
 
 import pytest
@@ -178,3 +179,27 @@ def test_le_chemin_critique_ne_passe_pas_par_kafka():
     with TestClient(creer_app(lambda: producteur, fabrique)) as c:
         assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 201
     assert not producteur.envois and len(pool.ecrites) == 1
+
+
+def test_pool_critique_ouvert_des_le_demarrage():
+    ouvertures = []
+
+    async def fabrique():
+        ouvertures.append(1)
+        return FauxPool()
+    with TestClient(creer_app(lambda: FauxProducteur(), fabrique)) as c:
+        assert c.get("/sante").status_code == 200
+        for _ in range(50):
+            if ouvertures:
+                break
+            time.sleep(0.02)
+        assert ouvertures == [1]
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 201
+    assert ouvertures == [1]
+
+
+def test_base_injoignable_au_demarrage_la_passerelle_demarre(caplog):
+    with client_critique(panne=True) as c:
+        assert c.get("/sante").status_code == 200
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 503
+    assert any("503 (OSError" in m for m in caplog.messages)

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -30,6 +31,7 @@ from lakehouse.contrat import TOPIC, ContratInvalide, valider
 
 DELAI_ENVOI_S = float(os.environ.get("DELAI_ENVOI_S", "2"))
 DELAI_CRITIQUE_S = float(os.environ.get("DELAI_CRITIQUE_S", "5"))
+journal = logging.getLogger("passerelle")
 
 
 async def creer_pool():
@@ -52,8 +54,18 @@ def creer_app(fabrique_producteur=creer_producteur, fabrique_pool=creer_pool) ->
         # Kafka peut être absent au démarrage (déploiement simultané, bascule) : la passerelle démarre quand même,
         # se déclare « pas prête » et répond 503 jusqu'à ce que le producteur soit connecté
         app.state.pret = asyncio.Event()
-        # pool du chemin critique : créé à la première action critique (PostgreSQL n'est pas requis pour démarrer)
+        # pool du chemin critique : ouvert en arrière-plan dès le démarrage, pour que la première action critique ne
+        # paie pas l'ouverture des connexions (TLS, authentification) ; PostgreSQL n'est pas requis pour démarrer :
+        # en cas d'échec, la première action critique réessaie
         app.state.pool, app.state.verrou_pool = None, asyncio.Lock()
+
+        async def prechauffer():
+            try:
+                await pool_critique()
+            except Exception as erreur:  # noqa: BLE001
+                journal.warning("pool du chemin critique non ouvert au démarrage : %s: %s",
+                                type(erreur).__name__, erreur)
+        prechauffage = asyncio.create_task(prechauffer())
 
         async def essayer() -> bool:
             producteur = fabrique_producteur()
@@ -73,6 +85,7 @@ def creer_app(fabrique_producteur=creer_producteur, fabrique_pool=creer_pool) ->
         # premier essai avant d'accepter du trafic ; en cas d'échec, nouveaux essais en arrière-plan
         tache = None if await essayer() else asyncio.create_task(reessayer())
         yield
+        prechauffage.cancel()
         if tache:
             tache.cancel()
         if app.state.pool is not None:
@@ -124,7 +137,8 @@ def creer_app(fabrique_producteur=creer_producteur, fabrique_pool=creer_pool) ->
             version = await asyncio.wait_for(ecrire(), DELAI_CRITIQUE_S)
         except asyncpg.exceptions.DataError as erreur:      # table non critique, données refusées
             return JSONResponse(status_code=422, content={"statut": "refusé", "raison": str(erreur)})
-        except Exception:  # noqa: BLE001 : base absente, bascule, délai dépassé… le client renvoie le même message
+        except Exception as erreur:  # noqa: BLE001 : base absente, bascule, délai dépassé… le client renvoie le même message
+            journal.warning("action critique %s : 503 (%s: %s)", ecriture.id, type(erreur).__name__, erreur)
             return JSONResponse(status_code=503, content={"statut": "réessayer", "id": str(ecriture.id)},
                                 headers={"Retry-After": "1"})
         return {"statut": "enregistré", "id": str(ecriture.id), "version": version}
