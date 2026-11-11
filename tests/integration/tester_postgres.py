@@ -13,6 +13,7 @@ Vérifie :
 Dépendances : pip install "pyiceberg[pyarrow]"
 """
 import json
+import subprocess
 import time
 import uuid
 
@@ -28,9 +29,20 @@ def primaire():
     return nom[0]
 
 
-def sql(pod, requete):
-    return kubectl("exec", pod, "-c", "postgres", "--", "psql", "-U", "postgres", "-d", "lake",
-                   "-X", "-tA", "-v", "ON_ERROR_STOP=1", "-c", requete).strip()
+def sql(pod, requete, base="lake"):
+    commande = ["kubectl", "-n", "spark", "exec", pod, "-c", "postgres", "--", "psql", "-U", "postgres", "-d", base,
+                "-X", "-tA", "-v", "ON_ERROR_STOP=1", "-c", requete]
+    resultat = subprocess.run(commande, text=True, capture_output=True)
+    if resultat.returncode != 0:
+        print(f"ECHEC SQL : {requete}\n{resultat.stderr.strip()}", flush=True)
+        raise SystemExit(1)
+    return resultat.stdout.strip()
+
+
+def historique_cron(pod):
+    print(sql(pod, "SELECT jobid, jobname, database, schedule, active FROM cron.job", base="postgres"))
+    print(sql(pod, "SELECT start_time, status, left(return_message, 300) FROM cron.job_run_details "
+                   "ORDER BY start_time DESC LIMIT 5", base="postgres"))
 
 
 def lot(*messages):
@@ -67,8 +79,9 @@ def main():
     duree = time.monotonic() - debut
     verifier(lu == "2", f"écriture visible dans la vue en {duree:.2f} s (kubectl exec compris)")
 
-    verifier(attendre("fusion par pg_cron", lambda: sql(pod, f"SELECT count(*) FROM chaud.{TABLE}") == "0"),
-             "la fusion planifiée a vidé la table chaude")
+    # fusion lancée à la main : une erreur de pg_lake / Polaris / MinIO s'affiche ici directement
+    verifier(sql(pod, f"SELECT lake.fusionner('{TABLE}')") == "2", "fusion manuelle : 2 lignes vers Iceberg")
+    verifier(sql(pod, f"SELECT count(*) FROM chaud.{TABLE}") == "0", "table chaude vidée")
     verifier(sql(pod, f"SELECT count(*) FROM app.{TABLE}") == "2", "2 lignes dans la table Iceberg app.commandes")
     verifier(sql(pod, f"SELECT statut FROM vue.{TABLE} WHERE id = '{a}'") == "ouverte", "vue identique après fusion")
 
@@ -85,9 +98,13 @@ def main():
         sql(pod, f"SELECT lake.ecrire_lot('{TABLE}', {lot((b, 'UPDATE', 3, 'bob', 50, 'payee'))})")
         verifier(sql(pod, f"SELECT statut FROM vue.{TABLE} WHERE id = '{b}'") == "payee",
                  "ligne froide modifiée : visible tout de suite")
-        verifier(attendre("fusion de la modification",
-                          lambda: any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist())),
-                 "modification appliquée à Iceberg à la fusion suivante")
+        # fusion suivante : celle planifiée par pg_cron (chaque minute)
+        if not attendre("fusion par pg_cron", lambda: sql(pod, f"SELECT count(*) FROM chaud.{TABLE}") == "0"):
+            historique_cron(pod)
+            verifier(False, "la fusion planifiée (pg_cron) a vidé la table chaude")
+        verifier(True, "la fusion planifiée (pg_cron) a vidé la table chaude")
+        verifier(any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()),
+                 "modification appliquée à Iceberg, lue par pyiceberg")
     finally:
         for processus in tunnels:
             processus.terminate()
