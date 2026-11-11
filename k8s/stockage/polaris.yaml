@@ -61,6 +61,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d   # polaris-db-init.sql : schéma polaris_schema
+      volumes:
+        - name: init
+          configMap:
+            name: polaris-db-init
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -92,7 +98,7 @@ spec:
             - name: POLARIS_PERSISTENCE_TYPE
               value: relational-jdbc
             - name: QUARKUS_DATASOURCE_JDBC_URL
-              value: jdbc:postgresql://polaris-db:5432/polaris
+              value: jdbc:postgresql://polaris-db:5432/polaris?currentSchema=polaris_schema
             - name: QUARKUS_DATASOURCE_USERNAME
               value: polaris
             - name: QUARKUS_DATASOURCE_PASSWORD
@@ -144,7 +150,7 @@ spec:
             - name: POLARIS_PERSISTENCE_TYPE
               value: relational-jdbc
             - name: QUARKUS_DATASOURCE_JDBC_URL
-              value: jdbc:postgresql://polaris-db:5432/polaris
+              value: jdbc:postgresql://polaris-db:5432/polaris?currentSchema=polaris_schema
             - name: QUARKUS_DATASOURCE_USERNAME
               value: polaris
             - name: QUARKUS_DATASOURCE_PASSWORD

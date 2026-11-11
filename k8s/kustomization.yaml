@@ -18,6 +18,10 @@ configMapGenerator:
   - name: polaris-init
     files:
       - init.py=stockage/polaris-init.py
+  # schéma de la base de Polaris (créé au premier démarrage de polaris-db)
+  - name: polaris-db-init
+    files:
+      - init.sql=stockage/polaris-db-init.sql
   - name: spark-conf
     files:
       - spark-connect/spark-defaults.conf
