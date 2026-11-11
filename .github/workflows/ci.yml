@@ -1,5 +1,6 @@
 # Intégration continue : à chaque push et à chaque pull request vers develop ou main.
 #   - python      : lint (ruff), compilation, tests unitaires (sans cluster)
+#   - sql         : modèle chaud + froid du PostgreSQL principal (tests/sql, PostgreSQL éphémère)
 #   - manifestes  : kustomize build + validation des schémas Kubernetes (kubeconform)
 #   - images      : construction des images Docker (publication : workflow « Images »)
 # Les tests d'intégration (cluster kind) tournent dans le workflow « Integration ».
@@ -47,6 +48,26 @@ jobs:
           else
             echo "Pas encore de tests unitaires"
           fi
+
+  sql:
+    name: SQL · modèle chaud + froid
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests du modèle (tables ordinaires à la place d'Iceberg)
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/modele.sql
 
   secrets:
     name: Aucun secret versionné
