@@ -29,8 +29,9 @@ spec:
   postgresql:
     version: "18"
     parameters:
-      # liste de Spilo + pg_extension_base (pg_lake)
-      shared_preload_libraries: "bg_mon,pg_stat_statements,pgextwlist,pg_auth_mon,set_user,pg_cron,pg_extension_base"
+      # liste par défaut de Spilo 4.1 pour PostgreSQL 18 (son script d'initialisation crée pg_stat_kcache dans
+      # chaque base : sans préchargement, le bootstrap échoue) + pg_extension_base (pg_lake)
+      shared_preload_libraries: "bg_mon,pg_stat_statements,pgextwlist,pg_auth_mon,set_user,timescaledb,pg_cron,pg_stat_kcache,pg_extension_base"
       # pg_cron lance la fusion dans un processus de fond (pas de connexion réseau ni de mot de passe)
       cron.use_background_workers: "on"
       max_worker_processes: "16"
