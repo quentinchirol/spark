@@ -96,7 +96,7 @@ jobs:
         run: scripts/dev/sauvegardes.sh
       - name: Opérateur PostgreSQL
         run: |
-          kubectl apply --server-side -k k8s/operateurs
+          kubectl apply --server-side -k tests/integration/operateurs
           kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/kafkanodepools.kafka.strimzi.io crd/kafkatopics.kafka.strimzi.io crd/scaledobjects.keda.sh --timeout=120s
           kubectl -n spark rollout status deploy/postgres-operator --timeout=240s
       - name: Déployer stockage + PostgreSQL
@@ -171,10 +171,10 @@ jobs:
         run: scripts/dev/sauvegardes.sh
       - name: Opérateurs (PostgreSQL, Kafka, KEDA)
         run: |
-          kubectl apply --server-side -k k8s/operateurs
+          kubectl apply --server-side -k tests/integration/operateurs
           kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/kafkanodepools.kafka.strimzi.io crd/kafkatopics.kafka.strimzi.io crd/scaledobjects.keda.sh --timeout=120s
           kubectl -n spark rollout status deploy/postgres-operator deploy/strimzi-cluster-operator --timeout=300s
-          kubectl -n keda rollout status deploy/keda-operator deploy/keda-operator-metrics-apiserver --timeout=300s
+          kubectl -n keda rollout status deploy/keda-operator deploy/keda-metrics-apiserver deploy/keda-admission --timeout=300s
       - name: Déployer le chemin d'écriture
         run: kubectl apply -k tests/integration/ecriture
       - name: Attendre Kafka, PostgreSQL, le schéma, les writers et la passerelle
