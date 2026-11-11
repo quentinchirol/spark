@@ -17,6 +17,9 @@ python/resultats/*.csv
 # --- Docker Compose --------------------------------------------------------------------------
 compose/data/
 
+# --- Déploiement GKE (kustomization temporaire de infra/gke/deployer.sh) ---------------------
+infra/gke/.deploiement-*/
+
 # --- Divers ----------------------------------------------------------------------------------
 .DS_Store
 .idea/
