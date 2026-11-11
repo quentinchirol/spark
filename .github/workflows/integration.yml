@@ -4,7 +4,10 @@
 #                fusion planifiée vers Iceberg, lecture des mêmes lignes par un autre moteur via Polaris ;
 #                sauvegardes WAL-G hors cluster et restauration à un instant donné dans un cluster neuf ;
 #   - ecriture : passerelle → Kafka → writers (KEDA) → PostgreSQL : ni perte ni doublon malgré un writer tué,
-#                writers ajoutés puis retirés selon le retard, test de charge k6 réduit (p99 < 500 ms).
+#                writers ajoutés puis retirés selon le retard, test de charge k6 réduit (p99 < 500 ms) ;
+#   - orchestration : Dagster lance le traitement Spark « ventes » (fichiers → bronze → silver → gold) en Jobs
+#                Kubernetes éphémères : contenu exact, reprise sans doublon, échec provoqué → 3 essais et aucune
+#                donnée partielle, plus aucun pod à la fin.
 # Voir tests/integration/. Se lance sur les changements du stockage et à la demande.
 name: Integration
 
@@ -14,10 +17,11 @@ on:
     paths:
       - "k8s/**"
       - "tests/integration/**"
-      - "image/postgres-lake/**"
+      - "image/**"
       - "scripts/**"
       - "python/ecrivain/**"
       - "python/passerelle/**"
+      - "python/orchestration/**"
       - "python/lakehouse/contrat.py"
       - "scripts/generer-secrets.sh"
       - ".github/workflows/integration.yml"
@@ -180,8 +184,11 @@ jobs:
           kubectl -n keda rollout status deploy/keda-operator deploy/keda-metrics-apiserver deploy/keda-admission --timeout=300s
       - name: Déployer le chemin d'écriture
         run: kubectl apply -k tests/integration/ecriture
-      - name: Attendre Kafka, PostgreSQL, le schéma, les writers et la passerelle
+      - name: Attendre Polaris, Kafka, PostgreSQL, le schéma, les writers et la passerelle
         run: |
+          # lake.creer_table crée des tables Iceberg via Polaris : le principal « postgres » doit y exister
+          # (polaris-init) ; sans cette attente, le test pouvait commencer avant (HTTP 401, constaté en CI)
+          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=420s
           kubectl -n spark wait --for=condition=Ready kafka/lakehouse --timeout=600s
           kubectl -n spark wait --for=condition=Ready kafkatopic/app kafkatopic/app-rejets --timeout=300s
           kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=600s
@@ -206,10 +213,86 @@ jobs:
         if: failure() || cancelled()
         run: |
           kubectl -n spark get pods,jobs,kafka,kafkatopic,postgresql,scaledobject,hpa -o wide || true
-          for r in deploy/ecrivain deploy/passerelle deploy/strimzi-cluster-operator job/lake-schema pod/rafale; do
+          for r in deploy/ecrivain deploy/passerelle deploy/strimzi-cluster-operator job/lake-schema job/polaris-init deploy/polaris pod/rafale; do
             echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
           done
           echo "::group::KEDA"; kubectl -n keda logs deploy/keda-operator --tail=60 || true; kubectl -n spark describe scaledobject ecrivain | tail -30 || true; echo "::endgroup::"
           for p in $(kubectl -n spark get pods -l strimzi.io/cluster=lakehouse -o name); do
             echo "::group::logs $p"; kubectl -n spark logs "$p" --all-containers --tail=60 --prefix || true; echo "::endgroup::"
           done
+
+  orchestration:
+    name: Orchestration · Dagster → traitement Spark (bronze → silver → gold) sur kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Place disque (images Spark et PostgreSQL, en double dans Docker et dans kind)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - name: Construire l'image Spark (pilotes et executors des traitements)
+        uses: docker/build-push-action@v6
+        with:
+          context: image
+          load: true
+          tags: spark-lakehouse:4.1.3
+          cache-from: type=gha,scope=spark-lakehouse
+      - name: Construire l'image PostgreSQL (base de Dagster)
+        uses: docker/build-push-action@v6
+        with:
+          context: image/postgres-lake
+          load: true
+          tags: postgres-lake:18
+          cache-from: type=gha,scope=postgres-lake
+      - name: Construire l'image Dagster
+        uses: docker/build-push-action@v6
+        with:
+          context: python
+          file: python/orchestration/Dockerfile
+          load: true
+          tags: lakehouse-dagster:1.0
+          cache-from: type=gha,scope=lakehouse-dagster
+      - uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: lakehouse
+          config: scripts/dev/kind.yaml
+      - name: Charger les images dans kind
+        run: kind load docker-image spark-lakehouse:4.1.3 postgres-lake:18 lakehouse-dagster:1.0 --name lakehouse
+      - name: Secrets de test
+        run: scripts/generer-secrets.sh --si-absents
+      - name: Opérateurs
+        run: |
+          kubectl apply --server-side -k tests/integration/operateurs
+          kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/kafkanodepools.kafka.strimzi.io crd/kafkatopics.kafka.strimzi.io crd/scaledobjects.keda.sh --timeout=120s
+          kubectl -n spark rollout status deploy/postgres-operator --timeout=240s
+      - name: Déployer stockage + Dagster
+        run: kubectl apply -k tests/integration/orchestration
+      - name: Attendre MinIO, Polaris, la base de Dagster et Dagster
+        run: |
+          kubectl -n spark rollout status sts/minio --timeout=240s
+          kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=300s
+          kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-outils --timeout=600s
+          kubectl -n spark rollout status deploy/dagster-code deploy/dagster-webserver deploy/dagster-daemon --timeout=300s
+          kubectl -n spark get pods -o wide
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test d'intégration
+        run: |
+          echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
+          pip install httpx "pyiceberg[pyarrow]"
+          python tests/integration/tester_orchestration.py
+      - name: Diagnostic en cas d'échec
+        if: failure() || cancelled()
+        run: |
+          kubectl -n spark get pods,jobs,postgresql -o wide || true
+          for r in deploy/dagster-code deploy/dagster-daemon deploy/dagster-webserver job/polaris-init deploy/polaris; do
+            echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=120 --prefix || true; echo "::endgroup::"
+          done
+          for p in $(kubectl -n spark get pods -l 'app=traitement' -o name) $(kubectl -n spark get pods -l spark-role=executor -o name); do
+            echo "::group::logs $p"; kubectl -n spark logs "$p" --all-containers --tail=200 --prefix || true; echo "::endgroup::"
+          done
+          kubectl -n spark get events --sort-by=.lastTimestamp | tail -60 || true
+          kubectl -n spark describe pods -l app=traitement | tail -80 || true

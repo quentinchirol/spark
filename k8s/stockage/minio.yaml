@@ -130,7 +130,7 @@ kind: Job
 metadata:
   name: minio-init
 spec:
-  # crée le bucket « warehouse » et les utilisateurs spark (lecture+écriture) et trino (lecture seule) ;
+  # crée les buckets « warehouse » et « sources » et les utilisateurs spark (lecture+écriture) et trino (lecture seule) ;
   # peut être relancé sans effet de bord
   backoffLimit: 30
   template:
@@ -146,6 +146,8 @@ spec:
                 echo "MinIO pas encore prêt"; sleep 3
               done
               mc mb --ignore-existing local/warehouse
+              # fichiers déposés pour les traitements à la demande (s3://sources/ventes/…, k8s/traitements)
+              mc mb --ignore-existing local/sources
               mc admin user add local "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
               mc admin policy attach local readwrite --user "$AWS_ACCESS_KEY_ID" || true
               mc admin user add local "$TRINO_S3_ACCESS_KEY" "$TRINO_S3_SECRET_KEY"

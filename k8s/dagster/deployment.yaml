@@ -1,0 +1,282 @@
+# Dagster : orchestration des traitements Spark à la demande (US-10, docs/traitements.md)
+#   - dagster-code      : serveur de code (python/orchestration) ; chaque run y tourne dans un processus et lance
+#                         ses étapes Spark comme Jobs Kubernetes éphémères (compte « dagster » ci-dessous) ;
+#   - dagster-webserver : interface (runs, journaux des étapes, relances) : kubectl port-forward svc/dagster-webserver 3000
+#   - dagster-daemon    : planifications, file d'attente des runs, surveillance des runs.
+# Base : cluster PostgreSQL lake-outils (postgres.yaml). Décision : docs/decisions/002-dagster-sans-spark-operator.md
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dagster
+---
+# droits du serveur de code : créer les Jobs Kubernetes des étapes, suivre leurs pods et lire leurs journaux
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dagster
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "jobs/status"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # delete : un Job en échec est supprimé avec ses pods par Dagster (sans ce droit, les pods restaient en Error)
+  - apiGroups: [""]
+    resources: ["pods", "pods/status"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dagster
+subjects:
+  - kind: ServiceAccount
+    name: dagster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dagster
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-code
+spec:
+  selector:
+    app: dagster-code
+  ports:
+    - name: grpc
+      port: 4000
+      targetPort: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver
+spec:
+  selector:
+    app: dagster-webserver
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-code
+spec:
+  # un seul serveur : les runs en cours sont des processus de ce pod (un redémarrage les interrompt ; le démon les
+  # passe en échec et l'étape interrompue est relançable sans donnée partielle)
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: dagster-code
+  template:
+    metadata:
+      labels:
+        app: dagster-code
+    spec:
+      serviceAccountName: dagster
+      # laisser aux runs en cours le temps de finir leur étape à l'arrêt du pod
+      terminationGracePeriodSeconds: 120
+      initContainers:
+        # attendre la base : démarré sans elle, le serveur de code reste en erreur sans s'arrêter (et sans aucun job
+        # visible dans Dagster), alors que l'interface et le démon, eux, redémarrent jusqu'à la joindre
+        - name: attendre-base
+          image: lakehouse-dagster:1.0
+          imagePullPolicy: Never
+          command:
+            - python
+            - -c
+            - |
+              import os, time, psycopg2
+              while True:
+                  try:
+                      psycopg2.connect(host="lake-outils", dbname="dagster", connect_timeout=3,
+                                       user=os.environ["DAGSTER_PG_USERNAME"],
+                                       password=os.environ["DAGSTER_PG_PASSWORD"]).close()
+                      break
+                  except psycopg2.OperationalError as erreur:
+                      print("base de Dagster pas encore prête :", str(erreur).strip().splitlines()[0], flush=True)
+                      time.sleep(3)
+          env:
+            - name: DAGSTER_PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: password
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+      containers:
+        - name: dagster-code
+          image: lakehouse-dagster:1.0
+          imagePullPolicy: Never      # image construite localement (python/orchestration/Dockerfile)
+          command: ["dagster", "code-server", "start", "-h", "0.0.0.0", "-p", "4000", "-m", "orchestration"]
+          env:
+            # image des pilotes et des executors Spark : remplacée par kustomize (images:) comme les autres
+            - name: IMAGE_SPARK
+              value: spark-lakehouse:4.1.3
+            - name: POLITIQUE_TIRAGE_IMAGES
+              value: Never
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DAGSTER_PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: password
+          ports:
+            - name: grpc
+              containerPort: 4000
+          readinessProbe:
+            exec:
+              command: ["dagster", "api", "grpc-health-check", "-p", "4000"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            # fichier par fichier : $DAGSTER_HOME reste inscriptible (stockage local des runs)
+            - name: instance
+              mountPath: /opt/dagster/home/dagster.yaml
+              subPath: dagster.yaml
+            - name: instance
+              mountPath: /opt/dagster/home/workspace.yaml
+              subPath: workspace.yaml
+      volumes:
+        - name: instance
+          configMap:
+            name: dagster-instance
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-webserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-webserver
+  template:
+    metadata:
+      labels:
+        app: dagster-webserver
+    spec:
+      serviceAccountName: dagster
+      containers:
+        - name: dagster-webserver
+          image: lakehouse-dagster:1.0
+          imagePullPolicy: Never
+          command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "/opt/dagster/home/workspace.yaml"]
+          env:
+            - name: DAGSTER_PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: password
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /server_info
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            # fichier par fichier : $DAGSTER_HOME reste inscriptible (stockage local des runs)
+            - name: instance
+              mountPath: /opt/dagster/home/dagster.yaml
+              subPath: dagster.yaml
+            - name: instance
+              mountPath: /opt/dagster/home/workspace.yaml
+              subPath: workspace.yaml
+      volumes:
+        - name: instance
+          configMap:
+            name: dagster-instance
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+spec:
+  # un seul démon par instance Dagster (planifications, file d'attente)
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: dagster-daemon
+  template:
+    metadata:
+      labels:
+        app: dagster-daemon
+    spec:
+      serviceAccountName: dagster
+      containers:
+        - name: dagster-daemon
+          image: lakehouse-dagster:1.0
+          imagePullPolicy: Never
+          command: ["dagster-daemon", "run", "-w", "/opt/dagster/home/workspace.yaml"]
+          env:
+            - name: DAGSTER_PG_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: DAGSTER_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dagster.lake-outils.credentials.postgresql.acid.zalan.do
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            # fichier par fichier : $DAGSTER_HOME reste inscriptible (stockage local des runs)
+            - name: instance
+              mountPath: /opt/dagster/home/dagster.yaml
+              subPath: dagster.yaml
+            - name: instance
+              mountPath: /opt/dagster/home/workspace.yaml
+              subPath: workspace.yaml
+      volumes:
+        - name: instance
+          configMap:
+            name: dagster-instance

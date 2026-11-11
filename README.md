@@ -140,6 +140,8 @@ Arrêter : `docker compose -f compose/docker-compose.yml down`
 | `k8s/stockage/polaris.yaml`               | Catalogue Apache Polaris (2 pods) + base PostgreSQL + Jobs d'initialisation (`polaris-init.py`) |
 | `k8s/trino/`                              | Trino : config, catalogue `lake` (même Iceberg), droits par utilisateur (`rules.json`) + Service (port 8443) |
 | `k8s/secrets/tokens`                      | Tokens `utilisateur=token` (Spark Connect **et** Trino), **non versionné** |
+| `k8s/traitements/`                        | Traitements Spark à la demande (`ventes.py`), lancés par Dagster ([docs/traitements.md](docs/traitements.md)) |
+| `k8s/dagster/`, `python/orchestration/`   | Dagster (serveur de code, interface, démon) et sa base `lake-outils` ; définitions des runs |
 | `k8s/pipeline/cronjob.yaml`               | Traitement planifié (identité `pipeline`) : `python/pipeline.py` chaque heure |
 | `k8s/secrets/s3-trino.env`                | Clé S3 **en lecture seule** de Trino (`TRINO_S3_ACCESS_KEY`, `TRINO_S3_SECRET_KEY`), **non versionné** |
 | `k8s/secrets/pipeline.env`                | `SPARK_CONNECT_TOKEN` du traitement planifié (= ligne `pipeline=` de `tokens`), **non versionné** |
@@ -153,6 +155,9 @@ Arrêter : `docker compose -f compose/docker-compose.yml down`
 docker build -t spark-lakehouse:4.1.3 image
 docker build -t lakehouse-pipeline:1.0 python
 docker build -t postgres-lake:18 image/postgres-lake
+docker build -t lakehouse-ecrivain:1.0 -f python/ecrivain/Dockerfile python
+docker build -t lakehouse-passerelle:1.0 -f python/passerelle/Dockerfile python
+docker build -t lakehouse-dagster:1.0 -f python/orchestration/Dockerfile python
 
 # secrets locaux (k8s/secrets/ n'est jamais versionné) : crée seulement les fichiers manquants
 scripts/generer-secrets.sh
@@ -222,6 +227,13 @@ L'application envoie chaque création, modification ou suppression à la passere
 réponse 202 en quelques millisecondes). Le message est conservé dans Kafka (3 nœuds), puis des writers l'écrivent
 par lots dans le PostgreSQL principal ; KEDA ajoute des writers quand le retard monte. Ni perte ni doublon, même si un
 pod tombe. Détails, codes de réponse, messages refusés et test de charge : [docs/ecritures.md](docs/ecritures.md).
+
+## Traitements Spark à la demande (Dagster)
+
+Dagster lance les traitements planifiés ou à la demande : chaque étape (bronze → silver → gold) est un Job Kubernetes
+éphémère (pilote Spark + executors), relancé jusqu'à 3 fois, sans donnée partielle (commits Iceberg), et rien ne reste
+allumé entre deux exécutions. Interface : `kubectl -n spark port-forward svc/dagster-webserver 3000:3000`. Traitement
+« ventes », garanties et ajout d'un traitement : [docs/traitements.md](docs/traitements.md).
 
 ## Stockage et catalogue : MinIO + Polaris
 

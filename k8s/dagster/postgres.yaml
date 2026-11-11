@@ -1,0 +1,29 @@
+# Base de Dagster (historique des runs, journaux, état des planifications) : cluster PostgreSQL distinct du principal,
+# pour que l'orchestration ne pèse jamais sur la base de l'application. Opérateur Zalando (k8s/operateurs).
+# Même image que le principal (une seule image PostgreSQL à maintenir) ; pg_lake n'y est pas utilisé.
+# Services : lake-outils (primaire). Mot de passe : Secret dagster.lake-outils.credentials.postgresql.acid.zalan.do
+apiVersion: acid.zalan.do/v1
+kind: postgresql
+metadata:
+  name: lake-outils
+spec:
+  teamId: lake
+  dockerImage: postgres-lake:18
+  # 2 instances (réplication asynchrone) : bascule automatique si le primaire tombe ; perdre les toutes dernières
+  # lignes de journal d'un run est acceptable ici (les données des traitements sont dans Iceberg)
+  numberOfInstances: 2
+  volume:
+    size: 5Gi
+  users:
+    dagster: []
+  databases:
+    dagster: dagster
+  postgresql:
+    version: "18"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

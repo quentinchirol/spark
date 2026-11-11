@@ -18,3 +18,9 @@ RUN cd /build/jars \
 
 FROM apache/spark:4.1.3-python3
 COPY --from=build /build/jars/ /opt/spark/jars/
+
+# pyarrow : lecture des fichiers sources (CSV) dans MinIO par les traitements à la demande (k8s/traitements)
+USER root
+RUN python3 -m pip install --no-cache-dir pyarrow==21.0.0 \
+ || python3 -m pip install --no-cache-dir --break-system-packages pyarrow==21.0.0
+USER spark

@@ -1,0 +1,102 @@
+# Orchestration pour la CI : Dagster (+ sa base lake-outils) lance le traitement Spark « ventes » sur MinIO + Polaris.
+# Sans Spark Connect, Trino, traitement planifié, PostgreSQL principal ni Kafka ; réduit pour un runner GitHub
+# (2 cœurs, 7 Go) : 1 instance PostgreSQL, CPU réservé minimal, Jobs supprimés 20 s après leur fin.
+# Nécessite k8s/operateurs.
+#   kubectl apply -k tests/integration/orchestration
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../k8s
+components:
+  - ../composants/sans-kafka
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: spark-connect
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: trino
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: pipeline-dashboard
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: acid.zalan.do/v1
+      kind: postgresql
+      metadata:
+        name: lake-principal
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: lake-schema
+        namespace: spark
+  - target:
+      kind: postgresql
+      name: lake-outils
+    patch: |-
+      - op: replace
+        path: /spec/numberOfInstances
+        value: 1
+      - op: replace
+        path: /spec/resources/requests
+        value: {cpu: 50m, memory: 256Mi}
+      - op: replace
+        path: /spec/volume/size
+        value: 1Gi
+  - target:
+      kind: Deployment
+      name: dagster-code
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: CPU_PILOTE, value: 100m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: CPU_EXECUTEUR, value: 100m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: DUREE_VIE_JOBS_S, value: "20"}
+      # planification arrêtée au départ : un run planifié à h+5 se mêlerait aux runs du test (le test l'active à la fin)
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLANIFICATIONS, value: arretees}
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 50m, memory: 384Mi}
+  - target:
+      kind: Deployment
+      name: dagster-(webserver|daemon)
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 25m, memory: 192Mi}
+  # demandes de mémoire réduites (les limites ne changent pas) : le pilote et l'executor Spark réservent 1,5 Gi chacun
+  - target:
+      kind: StatefulSet
+      name: minio
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 25m, memory: 128Mi}
+  - target:
+      kind: Deployment
+      name: polaris
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 50m, memory: 384Mi}

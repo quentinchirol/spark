@@ -27,5 +27,9 @@ images:
   - name: lakehouse-passerelle
     newName: ghcr.io/quentinchirol/lakehouse-passerelle
     newTag: develop
+  # la variable IMAGE_SPARK de dagster-code (image des pilotes Spark) suit spark-lakehouse
+  - name: lakehouse-dagster
+    newName: ghcr.io/quentinchirol/lakehouse-dagster
+    newTag: develop
 patches:
   - path: telechargement-images.yaml

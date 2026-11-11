@@ -1,0 +1,32 @@
+# Retire Dagster et sa base (lake-outils) d'un overlay de test qui ne les teste pas.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: acid.zalan.do/v1
+      kind: postgresql
+      metadata:
+        name: lake-outils
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: dagster-code
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: dagster-webserver
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: dagster-daemon
+        namespace: spark

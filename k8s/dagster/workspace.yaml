@@ -1,0 +1,6 @@
+# Emplacement du code (serveur gRPC dagster-code), lu par l'interface web et le démon
+load_from:
+  - grpc_server:
+      host: dagster-code
+      port: 4000
+      location_name: lakehouse

@@ -48,6 +48,57 @@ spec:
         - name: passerelle
           imagePullPolicy: Always
 ---
+# Dagster : ses pods tirent lakehouse-dagster, et les pilotes Spark qu'il crée tirent spark-lakehouse
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dagster
+  namespace: spark
+imagePullSecrets:
+  - name: ghcr-pull
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-code
+  namespace: spark
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: attendre-base
+          imagePullPolicy: Always
+      containers:
+        - name: dagster-code
+          imagePullPolicy: Always
+          env:
+            - name: POLITIQUE_TIRAGE_IMAGES
+              value: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-webserver
+  namespace: spark
+spec:
+  template:
+    spec:
+      containers:
+        - name: dagster-webserver
+          imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+  namespace: spark
+spec:
+  template:
+    spec:
+      containers:
+        - name: dagster-daemon
+          imagePullPolicy: Always
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:

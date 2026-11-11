@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import asyncpg
 
@@ -30,11 +32,28 @@ from lakehouse.contrat import TOPIC, ContratInvalide, valider
 
 DELAI_ENVOI_S = float(os.environ.get("DELAI_ENVOI_S", "2"))
 DELAI_CRITIQUE_S = float(os.environ.get("DELAI_CRITIQUE_S", "5"))
+journal = logging.getLogger("passerelle")
+
+
+# identifiants du rôle lake_critique : fichiers username / password du Secret de l'opérateur PostgreSQL, montés en
+# volume (k8s/passerelle) ; relus à chaque ouverture du pool, ils peuvent arriver après le démarrage
+IDENTIFIANTS_CRITIQUES = Path(os.environ.get("IDENTIFIANTS_CRITIQUES", "/etc/lake-critique"))
+
+
+def identifiants_critiques() -> dict:
+    try:
+        return {"user": (IDENTIFIANTS_CRITIQUES / "username").read_text().strip(),
+                "password": (IDENTIFIANTS_CRITIQUES / "password").read_text().strip()}
+    except FileNotFoundError:
+        if os.environ.get("PGUSER"):     # variables PG* (poste de développement, autre déploiement)
+            return {}
+        raise RuntimeError(f"identifiants du chemin critique absents ({IDENTIFIANTS_CRITIQUES})") from None
 
 
 async def creer_pool():
-    """Connexions au PostgreSQL principal pour le chemin critique (variables PGHOST, PGUSER, PGPASSWORD…)."""
-    return await asyncpg.create_pool(min_size=1, max_size=int(os.environ.get("CONNEXIONS_CRITIQUES", "10")),
+    """Connexions au PostgreSQL principal pour le chemin critique (PGHOST, PGDATABASE + identifiants ci-dessus)."""
+    return await asyncpg.create_pool(**identifiants_critiques(), min_size=1,
+                                     max_size=int(os.environ.get("CONNEXIONS_CRITIQUES", "10")),
                                      ssl=os.environ.get("PGSSLMODE", "require"), timeout=5)
 
 
@@ -52,8 +71,23 @@ def creer_app(fabrique_producteur=creer_producteur, fabrique_pool=creer_pool) ->
         # Kafka peut être absent au démarrage (déploiement simultané, bascule) : la passerelle démarre quand même,
         # se déclare « pas prête » et répond 503 jusqu'à ce que le producteur soit connecté
         app.state.pret = asyncio.Event()
-        # pool du chemin critique : créé à la première action critique (PostgreSQL n'est pas requis pour démarrer)
+        # pool du chemin critique : ouvert en arrière-plan dès le démarrage, pour que la première action critique ne
+        # paie pas l'ouverture des connexions (TLS, authentification) ; PostgreSQL n'est pas requis pour démarrer :
+        # nouveaux essais en arrière-plan, et chaque action critique réessaie si le pool n'est toujours pas ouvert
         app.state.pool, app.state.verrou_pool = None, asyncio.Lock()
+
+        async def prechauffer():
+            # nouvel essai toutes les 5 s tant que la base ou ses identifiants manquent (déploiement simultané)
+            for essai in range(720):
+                try:
+                    await pool_critique()
+                    return
+                except Exception as erreur:  # noqa: BLE001
+                    if essai % 12 == 0:
+                        journal.warning("pool du chemin critique pas encore ouvert : %s: %s",
+                                        type(erreur).__name__, erreur)
+                await asyncio.sleep(5)
+        prechauffage = asyncio.create_task(prechauffer())
 
         async def essayer() -> bool:
             producteur = fabrique_producteur()
@@ -73,6 +107,7 @@ def creer_app(fabrique_producteur=creer_producteur, fabrique_pool=creer_pool) ->
         # premier essai avant d'accepter du trafic ; en cas d'échec, nouveaux essais en arrière-plan
         tache = None if await essayer() else asyncio.create_task(reessayer())
         yield
+        prechauffage.cancel()
         if tache:
             tache.cancel()
         if app.state.pool is not None:
@@ -124,7 +159,8 @@ def creer_app(fabrique_producteur=creer_producteur, fabrique_pool=creer_pool) ->
             version = await asyncio.wait_for(ecrire(), DELAI_CRITIQUE_S)
         except asyncpg.exceptions.DataError as erreur:      # table non critique, données refusées
             return JSONResponse(status_code=422, content={"statut": "refusé", "raison": str(erreur)})
-        except Exception:  # noqa: BLE001 : base absente, bascule, délai dépassé… le client renvoie le même message
+        except Exception as erreur:  # noqa: BLE001 : base absente, bascule, délai dépassé… le client renvoie le même message
+            journal.warning("action critique %s : 503 (%s: %s)", ecriture.id, type(erreur).__name__, erreur)
             return JSONResponse(status_code=503, content={"statut": "réessayer", "id": str(ecriture.id)},
                                 headers={"Retry-After": "1"})
         return {"statut": "enregistré", "id": str(ecriture.id), "version": version}

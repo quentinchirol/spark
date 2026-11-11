@@ -1,6 +1,7 @@
 """Passerelle d'écriture : codes de réponse du contrat (202, 422, 503), message publié avec la clé = id."""
 import asyncio
 import json
+import time
 import uuid
 
 import pytest
@@ -178,3 +179,46 @@ def test_le_chemin_critique_ne_passe_pas_par_kafka():
     with TestClient(creer_app(lambda: producteur, fabrique)) as c:
         assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 201
     assert not producteur.envois and len(pool.ecrites) == 1
+
+
+def test_pool_critique_ouvert_des_le_demarrage():
+    ouvertures = []
+
+    async def fabrique():
+        ouvertures.append(1)
+        return FauxPool()
+    with TestClient(creer_app(lambda: FauxProducteur(), fabrique)) as c:
+        assert c.get("/sante").status_code == 200
+        for _ in range(50):
+            if ouvertures:
+                break
+            time.sleep(0.02)
+        assert ouvertures == [1]
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 201
+    assert ouvertures == [1]
+
+
+def test_base_injoignable_au_demarrage_la_passerelle_demarre(caplog):
+    with client_critique(panne=True) as c:
+        assert c.get("/sante").status_code == 200
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 503
+    assert any("503 (OSError" in m for m in caplog.messages)
+
+
+def test_identifiants_critiques_lus_dans_le_volume(tmp_path, monkeypatch):
+    from passerelle import app as module
+    monkeypatch.setattr(module, "IDENTIFIANTS_CRITIQUES", tmp_path)
+    monkeypatch.delenv("PGUSER", raising=False)
+    with pytest.raises(RuntimeError, match="absents"):
+        module.identifiants_critiques()
+    # le Secret arrive après le démarrage : lu à la tentative suivante
+    (tmp_path / "username").write_text("lake_critique\n")
+    (tmp_path / "password").write_text("secret\n")
+    assert module.identifiants_critiques() == {"user": "lake_critique", "password": "secret"}
+
+
+def test_identifiants_critiques_par_variables_sans_volume(tmp_path, monkeypatch):
+    from passerelle import app as module
+    monkeypatch.setattr(module, "IDENTIFIANTS_CRITIQUES", tmp_path / "absent")
+    monkeypatch.setenv("PGUSER", "moi")
+    assert module.identifiants_critiques() == {}
