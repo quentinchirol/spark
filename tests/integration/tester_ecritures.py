@@ -6,7 +6,8 @@
      et l'historique contient chaque message accepté une seule fois ;
   4. le retard a fait ajouter des writers par KEDA, retirés ensuite quand le calme est revenu ;
   5. (US-8) pendant le pic, des actions critiques sont enregistrées en base AVANT leur réponse, sans attendre la file
-     Kafka (p99 < 500 ms) ; une action critique envoyée par erreur sur le chemin Kafka est mise en rejet.
+     Kafka (p99 < 500 ms) ; une action critique envoyée par erreur sur le chemin Kafka est mise en rejet. Pour que
+     la file soit réellement chargée, les writers sont mis en pause (KEDA) pendant la rafale, puis relancés.
 
     python tests/integration/tester_ecritures.py
 Dépendances : pip install httpx
@@ -131,22 +132,54 @@ async def envoyer(par_id, apres_moitie):
     return acceptes
 
 
+def fin_du_topic(topic):
+    sortie = kubectl("exec", "lakehouse-noeuds-0", "--", "bin/kafka-get-offsets.sh", "--bootstrap-server",
+                     "localhost:9092", "--topic", topic)
+    return sum(int(ligne.rsplit(":", 1)[1]) for ligne in sortie.splitlines() if ligne.count(":") >= 2)
+
+
 def retard():
-    """Messages en attente du groupe pg-writer sur le topic app (somme des LAG)."""
-    sortie = kubectl("exec", "lakehouse-noeuds-0", "--", "bin/kafka-consumer-groups.sh", "--bootstrap-server",
-                     "localhost:9092", "--describe", "--group", "pg-writer")
-    total = 0
+    """Messages du topic app pas encore validés par le groupe pg-writer : fin du topic − offsets validés.
+
+    Calculé ainsi (et non par la colonne LAG) pour rester juste quand aucun writer ne tourne : une partition sans
+    offset validé n'a alors pas de LAG, et le groupe peut même ne plus exister."""
+    try:
+        sortie = kubectl("exec", "lakehouse-noeuds-0", "--", "bin/kafka-consumer-groups.sh", "--bootstrap-server",
+                         "localhost:9092", "--describe", "--group", "pg-writer")
+    except subprocess.CalledProcessError:
+        sortie = ""
+    valides = 0
     for ligne in sortie.splitlines():
         champs = ligne.split()
-        if len(champs) > 5 and champs[1] == "app" and champs[5].isdigit():
-            total += int(champs[5])
-    return total
+        if len(champs) > 3 and champs[1] == "app" and champs[3].isdigit():
+            valides += int(champs[3])
+    return fin_du_topic("app") - valides
+
+
+def suspendre_writers():
+    """Writers arrêtés (KEDA en pause à 0) : la rafale reste en file, aussi chargée que possible."""
+    kubectl("annotate", "scaledobject", "ecrivain", "autoscaling.keda.sh/paused-replicas=0", "--overwrite")
+    debut = time.monotonic()
+    while time.monotonic() - debut < 180:
+        if nb_writers() == 0 and not kubectl("get", "pods", "-l", "app=ecrivain", "-o", "name").split():
+            return
+        time.sleep(2)
+    raise SystemExit("ECHEC les writers ne se sont pas arrêtés (pause KEDA)")
+
+
+def reprendre_writers():
+    kubectl("annotate", "scaledobject", "ecrivain", "autoscaling.keda.sh/paused-replicas-")
+    debut = time.monotonic()
+    while time.monotonic() - debut < 180:
+        if nb_writers() >= 1:
+            kubectl("rollout", "status", "deploy/ecrivain", "--timeout=180s")
+            return
+        time.sleep(2)
+    raise SystemExit("ECHEC KEDA n'a pas relancé de writer")
 
 
 def nb_rejets():
-    sortie = kubectl("exec", "lakehouse-noeuds-0", "--", "bin/kafka-get-offsets.sh", "--bootstrap-server",
-                     "localhost:9092", "--topic", "app-rejets")
-    return sum(int(ligne.rsplit(":", 1)[1]) for ligne in sortie.splitlines() if ligne.count(":") >= 2)
+    return fin_du_topic("app-rejets")
 
 
 async def actions_critiques():
@@ -189,6 +222,9 @@ def main():
     par_id, attendu = plan_ecritures()
     observateur = Observateur()
     observateur.start()
+    # writers arrêtés pendant la rafale : les actions critiques passent avec une file Kafka réellement chargée (en
+    # les laissant tourner, les writers suivaient parfois la rafale et la file restait sous 1 000, constaté en CI)
+    suspendre_writers()
     kubectl("run", "rafale", "--image=lakehouse-ecrivain:1.0", "--image-pull-policy=Never", "--restart=Never",
             "--command", "--", "python", "-c", SCRIPT_RAFALE)
     print(f"     rafale de {NB_RAFALE} messages lancée dans le cluster", flush=True)
@@ -196,10 +232,11 @@ def main():
     try:
         # --- actions critiques pendant que la file Kafka est chargée par la rafale (US-8) ---------------------
         debut = time.monotonic()
-        while retard() < 1000 and time.monotonic() - debut < 90:
+        while retard() < 5000 and time.monotonic() - debut < 120:
             time.sleep(1)
         charge = retard()
         latences, ids_critiques = asyncio.run(actions_critiques())
+        reprendre_writers()
         latences.sort()
         p99 = latences[int(len(latences) * 0.99) - 1]
         verifier(charge >= 1000, f"file Kafka chargée pendant les actions critiques ({charge} messages en attente)")
