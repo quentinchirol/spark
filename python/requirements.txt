@@ -4,3 +4,4 @@ boto3==1.43.126
 pytest
 fastapi==0.115.6
 httpx
+asyncpg==0.30.0

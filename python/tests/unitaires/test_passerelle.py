@@ -88,3 +88,93 @@ def test_sans_kafka_la_passerelle_demarre_et_repond_503():
 def test_prete_des_le_demarrage_quand_kafka_est_joignable():
     with client(FauxProducteur()) as c:
         assert c.get("/sante").status_code == 200
+
+
+# --- chemin critique : POST /ecritures/critiques --------------------------------------------------------------
+import asyncpg  # noqa: E402
+
+
+class FausseConnexion:
+    def __init__(self, base):
+        self.base = base
+
+    async def fetchval(self, requete, table, message):
+        if self.base.lente:
+            await asyncio.sleep(5)
+        if table not in self.base.critiques:
+            raise asyncpg.exceptions.DataError(f"table {table} non critique")
+        self.base.ecrites.append((table, json.loads(message)))
+        return len(self.base.ecrites)
+
+
+class FauxPool:
+    def __init__(self, critiques=("paiements",), lente=False):
+        self.critiques, self.lente, self.ecrites = set(critiques), lente, []
+
+    def acquire(self):
+        base = self
+
+        class Contexte:
+            async def __aenter__(self):
+                return FausseConnexion(base)
+
+            async def __aexit__(self, *exc):
+                return False
+        return Contexte()
+
+    async def close(self):
+        pass
+
+
+def client_critique(pool=None, panne=False):
+    async def fabrique():
+        if panne:
+            raise OSError("PostgreSQL injoignable")
+        return pool
+    return TestClient(creer_app(lambda: FauxProducteur(), fabrique))
+
+
+def test_action_critique_enregistree_puis_201_avec_version():
+    pool, corps = FauxPool(), ecriture(table="paiements")
+    with client_critique(pool) as c:
+        reponse = c.post("/ecritures/critiques", json=corps)
+    assert reponse.status_code == 201
+    assert reponse.json() == {"statut": "enregistré", "id": corps["id"], "version": 1}
+    table, message = pool.ecrites[0]
+    assert table == "paiements" and message["id"] == corps["id"] and message["donnees"]["montant"] == 3
+
+
+def test_action_critique_sur_table_normale_422():
+    with client_critique(FauxPool()) as c:
+        reponse = c.post("/ecritures/critiques", json=ecriture(table="ventes"))
+    assert reponse.status_code == 422 and "non critique" in reponse.json()["raison"]
+
+
+def test_action_critique_hors_contrat_422_sans_ecriture():
+    pool = FauxPool()
+    with client_critique(pool) as c:
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements", op="MERGE")).status_code == 422
+    assert not pool.ecrites
+
+
+def test_action_critique_base_injoignable_503_avec_le_meme_id():
+    corps = ecriture(table="paiements")
+    with client_critique(panne=True) as c:
+        reponse = c.post("/ecritures/critiques", json=corps)
+    assert reponse.status_code == 503 and reponse.json()["id"] == corps["id"]
+
+
+def test_action_critique_trop_lente_503(monkeypatch):
+    monkeypatch.setattr("passerelle.app.DELAI_CRITIQUE_S", 0.1)
+    with client_critique(FauxPool(lente=True)) as c:
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 503
+
+
+def test_le_chemin_critique_ne_passe_pas_par_kafka():
+    producteur, pool = FauxProducteur(), FauxPool()
+
+    async def fabrique():
+        return pool
+    with TestClient(creer_app(lambda: producteur, fabrique)) as c:
+        assert c.post("/ecritures/critiques", json=ecriture(table="paiements")).status_code == 201
+    assert not producteur.envois and len(pool.ecrites) == 1
