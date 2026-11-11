@@ -76,6 +76,22 @@ def lignes(debut, fin):
                      "valeur": pa.array([f"v{i}" for i in range(debut, fin)], pa.string())})
 
 
+def avec_reprises(action, delai_max=90):
+    """Exécute action() en réessayant : après la perte d'un pod, MinIO met quelques secondes à écarter
+    le pair disparu (les requêtes lentes expirent côté client). Affiche la durée de bascule observée."""
+    debut = time.monotonic()
+    while True:
+        try:
+            resultat = action()
+            print(f"     (réussi après {time.monotonic() - debut:.0f} s)")
+            return resultat
+        except Exception as erreur:  # noqa: BLE001
+            if time.monotonic() - debut > delai_max:
+                raise
+            print(f"     nouvel essai ({type(erreur).__name__})")
+            time.sleep(3)
+
+
 def verifier(condition, message):
     print(("OK   " if condition else "ECHEC"), message)
     if not condition:
@@ -111,8 +127,8 @@ def main():
         # --- 1 pod MinIO arrêté (minio-3 : le plus grand numéro d'un StatefulSet) -----------------
         kubectl("scale", "sts/minio", "--replicas=3")
         kubectl("wait", "--for=delete", "pod/minio-3", "--timeout=120s")
-        verifier(spark.load_table(nom).scan().to_arrow().num_rows == 1000, "pod minio-3 arrêté : lecture OK")
-        spark.load_table(nom).append(lignes(1000, 1500))
+        verifier(avec_reprises(lambda: spark.load_table(nom).scan().to_arrow().num_rows) == 1000, "pod minio-3 arrêté : lecture OK")
+        avec_reprises(lambda: spark.load_table(nom).append(lignes(1000, 1500)))
         verifier(spark.load_table(nom).scan().to_arrow().num_rows == 1500, "pod minio-3 arrêté : écriture OK (1500 lignes)")
 
         # --- principal trino : lecture seule ------------------------------------------------------
