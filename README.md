@@ -20,7 +20,7 @@ spark/
 │   ├── stockage/         minio.yaml (S3, 4 pods), polaris.yaml (catalogue, 2 pods + PostgreSQL), polaris-init.py
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
 │   ├── postgres/         PostgreSQL principal (3 instances synchrones) + sql/ : modèle chaud + froid
-│   ├── operateurs/       opérateur Zalando postgres-operator : kubectl apply --server-side -k k8s/operateurs (avant k8s/)
+│   ├── operateurs/       opérateurs Zalando (PostgreSQL), Strimzi (Kafka), KEDA : kubectl apply --server-side -k k8s/operateurs (avant k8s/)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
 │   ├── config-kustomize/ images désignées dans des variables (image des executors)
 │   └── secrets/          tokens, clés S3, token pipeline, certificat Trino  (non versionnés)
@@ -157,7 +157,7 @@ scripts/generer-secrets.sh
 
 # opérateurs d'abord : leurs CRD doivent exister avant le reste
 kubectl apply --server-side -k k8s/operateurs
-kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do
+kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/scaledobjects.keda.sh
 kubectl apply -k k8s
 ```
 

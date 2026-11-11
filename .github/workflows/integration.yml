@@ -92,7 +92,7 @@ jobs:
       - name: Opérateur PostgreSQL
         run: |
           kubectl apply --server-side -k k8s/operateurs
-          kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do --timeout=120s
+          kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/kafkanodepools.kafka.strimzi.io crd/kafkatopics.kafka.strimzi.io crd/scaledobjects.keda.sh --timeout=120s
           kubectl -n spark rollout status deploy/postgres-operator --timeout=240s
       - name: Déployer stockage + PostgreSQL
         run: kubectl apply -k tests/integration/postgres

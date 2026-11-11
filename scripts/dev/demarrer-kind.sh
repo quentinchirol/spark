@@ -29,7 +29,7 @@ scripts/dev/sauvegardes.sh
 
 echo "==> Opérateurs (leurs CRD doivent exister avant le reste)"
 kubectl apply --server-side -k k8s/operateurs
-kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do --timeout=2m
+kubectl wait --for=condition=established crd/postgresqls.acid.zalan.do crd/kafkas.kafka.strimzi.io crd/kafkanodepools.kafka.strimzi.io crd/kafkatopics.kafka.strimzi.io crd/scaledobjects.keda.sh --timeout=2m
 
 echo "==> Déploiement"
 kubectl apply -k k8s
