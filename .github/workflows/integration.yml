@@ -47,6 +47,8 @@ jobs:
           python-version: "3.12"
       - name: Test d'intégration
         run: |
+          # Polaris renvoie aux clients l'adresse S3 http://minio:9000 : on la fait pointer vers le port-forward
+          echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
           pip install "pyiceberg[pyarrow]"
           python tests/integration/tester_stockage.py
       - name: Diagnostic en cas d'échec

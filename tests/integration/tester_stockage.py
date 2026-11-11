@@ -5,6 +5,7 @@ Vérifie les critères de la US-4 qui ne dépendent pas de Spark :
   2. un pod MinIO arrêté : lecture ET écriture continuent ;
   3. le principal « trino » (lecture seule) lit la table mais ne peut ni écrire ni créer.
 
+    echo '127.0.0.1 minio' | sudo tee -a /etc/hosts   (une fois, voir PORT_S3 ci-dessous)
     python tests/integration/tester_stockage.py        (cluster déjà déployé, secrets dans k8s/secrets)
 Dépendances : pip install "pyiceberg[pyarrow]"
 """
@@ -22,7 +23,9 @@ from pyiceberg.types import LongType, NestedField, StringType
 
 SECRETS = Path(__file__).resolve().parents[2] / "k8s" / "secrets"
 NS = "spark"
-PORT_S3, PORT_POLARIS = 19000, 18181
+# Polaris renvoie aux clients l'adresse S3 du catalogue (http://minio:9000) : le nom « minio » doit donc
+# pointer vers 127.0.0.1 sur la machine du test (echo '127.0.0.1 minio' | sudo tee -a /etc/hosts).
+PORT_S3, PORT_POLARIS = 9000, 18181
 
 
 def env(fichier):
@@ -59,7 +62,7 @@ def catalogue(credential, acces_s3):
             "oauth2-server-uri": f"http://localhost:{PORT_POLARIS}/api/catalog/v1/oauth/tokens",
             # pas d'identifiants temporaires (MinIO sans STS) : comme Spark, le client utilise sa propre clé S3
             "header.X-Iceberg-Access-Delegation": "",
-            "s3.endpoint": f"http://localhost:{PORT_S3}",
+            "s3.endpoint": f"http://minio:{PORT_S3}",
             "s3.access-key-id": acces_s3[0],
             "s3.secret-access-key": acces_s3[1],
             "s3.path-style-access": "true",
@@ -80,6 +83,12 @@ def verifier(condition, message):
 
 
 def main():
+    try:
+        adresse = socket.gethostbyname("minio")
+    except OSError:
+        adresse = None
+    if adresse != "127.0.0.1":
+        sys.exit("Le nom « minio » doit pointer vers 127.0.0.1 : echo '127.0.0.1 minio' | sudo tee -a /etc/hosts")
     s3_spark, s3_trino = env("s3.env"), env("s3-trino.env")
     cle_spark = (s3_spark["AWS_ACCESS_KEY_ID"], s3_spark["AWS_SECRET_ACCESS_KEY"])
     cle_trino = (s3_trino["TRINO_S3_ACCESS_KEY"], s3_trino["TRINO_S3_SECRET_KEY"])
