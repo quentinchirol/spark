@@ -37,9 +37,8 @@ patches:
       - op: replace
         path: /spec/sidecars/0/resources/requests
         value: {cpu: 25m, memory: 128Mi}
-      - op: replace
-        path: /spec/sidecars/0/env/0/value
-        value: 256MB
+      # PGDUCK_MEMORY_LIMIT garde sa valeur de base (1GB) : à 256MB, DuckDB manque de mémoire pendant la fusion
+      # vers Iceberg et pgduck_server s'arrête (constaté en CI)
       - op: replace
         path: /spec/volume/size
         value: 2Gi

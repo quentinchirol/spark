@@ -51,6 +51,12 @@ passent dans Iceberg, une ligne réécrite pendant la fusion reste chaude. Lance
 SELECT lake.fusionner('commandes');
 ```
 
+## Limites constatées
+
+- **Mémoire de DuckDB** (`PGDUCK_MEMORY_LIMIT`, 1 Go) : à 256 Mo, la fusion vers Iceberg manque de mémoire et
+  `pgduck_server` s'arrête entièrement (toutes les requêtes pg_lake du pod échouent jusqu'à son redémarrage).
+  À dimensionner avec le volume de chaque fusion (US-15).
+
 ## Accès
 
 ```bash

@@ -77,7 +77,9 @@ spec:
             --cache_dir /tmp/pgduck-cache \
             --init_file_path /tmp/pgduck-init.sql
       env:
-        # mémoire maximale de DuckDB : sans limite, il prend 80 % de la mémoire du nœud
+        # mémoire maximale de DuckDB : sans limite, il prend 80 % de la mémoire du nœud. Trop basse, la fusion vers
+        # Iceberg échoue et pgduck_server S'ARRÊTE (« unrecoverable failure from duckdb ») : 256MB ne suffit pas
+        # (constaté en CI). Garder la limite du conteneur au-dessus (marge pour le processus lui-même).
         - name: PGDUCK_MEMORY_LIMIT
           value: 1GB
         - name: AWS_ACCESS_KEY_ID
