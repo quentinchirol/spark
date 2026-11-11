@@ -1,7 +1,7 @@
 # Cluster Spark 4.1.3 + Apache Iceberg
 
 **Versions** : Spark **4.1.3** (version contre laquelle Iceberg 1.12.0 est compilé et testé),
-Iceberg **1.12.0**, SeaweedFS **4.48** (stockage S3), catalogue Iceberg REST **1.10.1**.
+Iceberg **1.12.0**, MinIO (fork pgsty, stockage S3, 4 pods), catalogue Apache Polaris **1.8.0** (2 pods).
 
 ```
 spark/
@@ -16,7 +16,7 @@ spark/
 │   ├── kustomization.yaml
 │   ├── commun/           namespace, droits (RBAC)
 │   ├── spark-connect/    serveur : deployment.yaml, spark-defaults.conf, fairscheduler.xml
-│   ├── stockage/         seaweedfs.yaml (S3), iceberg-rest.yaml (catalogue)
+│   ├── stockage/         minio.yaml (S3, 4 pods), polaris.yaml (catalogue, 2 pods + PostgreSQL), polaris-init.py
 │   ├── trino/            SQL interactif en LECTURE SEULE (DBeaver, dashboards)
 │   ├── pipeline/         CronJob : Spark recalcule les tables agrégées chaque heure
 │   ├── config-kustomize/ images désignées dans des variables (image des executors)
@@ -107,9 +107,9 @@ Arrêter : `docker compose -f compose/docker-compose.yml down`
  (token B)                               │ 3. AuditListener → logs "AUDIT {...}"   │
                                          └───────┬────────────────────┬────────────┘
                                                  ▼                    ▼
-                          executors à la demande (2 → 3)      catalogue iceberg-rest
+                          executors à la demande (2 → 3)      catalogue Polaris (OAuth2)
                                                  │                    │
-                                                 └──► SeaweedFS (S3) ◄┘  s3://warehouse/
+                                                 └──► MinIO (S3) ◄────┘  s3://warehouse/
 ```
 
 - **Authentification** : un appel sans token, ou avec un token inconnu, est refusé (`UNAUTHENTICATED`).
@@ -131,8 +131,8 @@ Arrêter : `docker compose -f compose/docker-compose.yml down`
 | `k8s/spark-connect/deployment.yaml`       | Deployment du serveur + Service (port 15002)               |
 | `k8s/spark-connect/spark-defaults.conf`   | Config Spark : executors, auth, audit, catalogue Iceberg, jointures sans redistribution |
 | `k8s/spark-connect/fairscheduler.xml`     | Partage équitable des executors                            |
-| `k8s/stockage/seaweedfs.yaml`             | Stockage S3 (SeaweedFS) sur volume persistant              |
-| `k8s/stockage/iceberg-rest.yaml`          | Catalogue Iceberg REST sur volume persistant               |
+| `k8s/stockage/minio.yaml`                 | Stockage S3 : MinIO distribué (4 pods, codage d'effacement) + Job de création du bucket et des utilisateurs |
+| `k8s/stockage/polaris.yaml`               | Catalogue Apache Polaris (2 pods) + base PostgreSQL + Jobs d'initialisation (`polaris-init.py`) |
 | `k8s/trino/`                              | Trino : config, catalogue `lake` (même Iceberg), droits par utilisateur (`rules.json`) + Service (port 8443) |
 | `k8s/secrets/tokens`                      | Tokens `utilisateur=token` (Spark Connect **et** Trino), **non versionné** |
 | `k8s/pipeline/cronjob.yaml`               | Traitement planifié (identité `pipeline`) : `python/pipeline.py` chaque heure |
@@ -154,7 +154,7 @@ scripts/generer-secrets.sh
 kubectl apply -k k8s
 ```
 
-Les tables Iceberg et le catalogue sont sur des volumes persistants : ils survivent aux
+Les tables Iceberg (MinIO) et le catalogue (PostgreSQL de Polaris) sont sur des volumes persistants : ils survivent aux
 redémarrages des pods (mais pas à `kubectl delete -k k8s`, qui supprime les volumes).
 
 L'image des executors n'est écrite nulle part en dur : c'est toujours celle du serveur Spark Connect
@@ -191,11 +191,22 @@ La CI échoue si un fichier de ce dossier est versionné ou si une clé est dét
 ```bash
 scripts/generer-secrets.sh --rotation        # régénère tous les secrets
 kubectl apply -k k8s
-kubectl -n spark rollout restart deploy/seaweedfs deploy/trino deploy/spark-connect
+kubectl -n spark rollout restart sts/minio deploy/polaris deploy/trino deploy/spark-connect
 ```
 
 Après une rotation, les anciennes clés et anciens tokens ne fonctionnent plus : redistribuez les nouveaux
 tokens (`k8s/secrets/tokens`) et le certificat (`k8s/secrets/trino-cert.pem`).
+
+## Stockage et catalogue : MinIO + Polaris
+
+- **MinIO** (`http://minio:9000`) : 4 pods, 1 volume chacun, codage d'effacement. Un pod arrêté ne gêne ni la lecture ni
+  l'écriture. Deux utilisateurs S3 : `spark` (lecture + écriture, `k8s/secrets/s3.env`) et `trino` (lecture seule).
+- **Polaris** (`http://polaris:8181/api/catalog`) : catalogue Iceberg REST du bucket `warehouse`, 2 pods sur la même base.
+  Spark s'authentifie comme principal `spark` (rôle `ecriture`), Trino comme `trino` (rôle `lecture`) ; PostgreSQL + pg_lake
+  lira les mêmes tables (US-7). Les identifiants sont dans `k8s/secrets/polaris-*.env`.
+- **Initialisation** (Jobs lancés par `kubectl apply -k k8s`) : `minio-init` (bucket, utilisateurs), `polaris-bootstrap`
+  (schéma et compte root), `polaris-init` (catalogue `lake`, rôles, principaux).
+- Console MinIO : `kubectl -n spark port-forward svc/minio 9001:9001` (compte `k8s/secrets/minio-root.env`).
 
 ## Gérer les utilisateurs
 
@@ -410,8 +421,10 @@ Comment sont mesurés les temps :
   (Loki, ELK…) pour conserver l'audit.
 - **Isolation logique seulement** : une requête très lourde ralentit les autres, et un serveur
   qui plante coupe toutes les sessions (1 seul replica, les sessions sont en mémoire).
-- **Catalogue de démonstration** : `iceberg-rest-fixture` (SQLite) convient pour un poste ou des
-  tests ; en production, préférez un catalogue robuste (Apache Polaris, Lakekeeper, JDBC sur PostgreSQL).
+- **Base de Polaris** : le catalogue vit dans un PostgreSQL à 1 pod (`polaris-db`) : s'il est indisponible, Polaris
+  l'est aussi. Il sera remplacé par le PostgreSQL à haute disponibilité (CloudNativePG) de la US-7.
+- **MinIO sur 3 zones** : 4 pods = 2 + 1 + 1 par zone. La perte d'un pod ou de la zone à 1 pod laisse lecture et écriture ;
+  la perte de la zone à 2 pods laisse le stockage en lecture seule (aucune donnée perdue).
 - **Droits sur les tables** : côté Spark, tous les utilisateurs authentifiés peuvent lire **et écrire**
   toutes les tables `lake.*` (pas seulement `pipeline`) ; les droits par utilisateur ne s'appliquent
   qu'à Trino (`rules.json`).
