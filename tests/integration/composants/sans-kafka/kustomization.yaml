@@ -1,0 +1,39 @@
+# Retire Kafka (cluster, nœuds, topics) d'un overlay de test qui ne le teste pas.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: Kafka
+      metadata:
+        name: lakehouse
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaNodePool
+      metadata:
+        name: noeuds
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: app
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: events
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: app-rejets
+        namespace: spark

@@ -1,0 +1,46 @@
+# Topics déclarés (le Topic Operator de Strimzi les crée et les maintient).
+#
+# app : écritures de l'application (contrat docs/contrat-ecriture.md), clé = id de la ligne.
+#   24 partitions = 24 writers au maximum. NE JAMAIS CHANGER ce nombre : la partition d'un id changerait et
+#   l'ordre de ses modifications ne serait plus garanti (l'offset sert de numéro de version).
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: app
+  labels:
+    strimzi.io/cluster: lakehouse
+spec:
+  partitions: 24
+  replicas: 3
+  config:
+    min.insync.replicas: 2
+    retention.ms: 604800000        # 7 jours : de quoi rejouer après un incident
+---
+# events : événements bruts (IoT, logs, clics), lus par Spark en mode availableNow (US-11)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: events
+  labels:
+    strimzi.io/cluster: lakehouse
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    min.insync.replicas: 2
+    retention.ms: 604800000
+---
+# app-rejets : messages refusés par les writers (contrat non respecté, table inconnue), avec la raison en en-tête.
+# Rien n'est jeté silencieusement ; à surveiller (US-20).
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: app-rejets
+  labels:
+    strimzi.io/cluster: lakehouse
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    min.insync.replicas: 2
+    retention.ms: 2592000000       # 30 jours
