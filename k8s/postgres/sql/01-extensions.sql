@@ -1,7 +1,7 @@
 -- Extensions et accès au catalogue Polaris. Idempotent.
 -- Variables psql : polaris_client_id, polaris_client_secret (Secret polaris-postgres, principal « postgres »).
 CREATE EXTENSION IF NOT EXISTS pg_lake CASCADE;
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+-- pg_cron vit dans la base postgres (Spilo l'y crée) : la fusion y est planifiée pour la base lake (04-planification.sql)
 
 -- tables Iceberg déclarées dans Polaris : le catalogue REST porte le nom de la base (lake)
 CREATE SERVER IF NOT EXISTS polaris TYPE 'rest' FOREIGN DATA WRAPPER iceberg_catalog

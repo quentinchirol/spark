@@ -31,7 +31,6 @@ spec:
     parameters:
       # liste de Spilo + pg_extension_base (pg_lake)
       shared_preload_libraries: "bg_mon,pg_stat_statements,pgextwlist,pg_auth_mon,set_user,pg_cron,pg_extension_base"
-      cron.database_name: lake
       # pg_cron lance la fusion dans un processus de fond (pas de connexion réseau ni de mot de passe)
       cron.use_background_workers: "on"
       max_worker_processes: "16"
