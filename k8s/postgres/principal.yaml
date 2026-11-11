@@ -135,10 +135,15 @@ spec:
           mkdir -p /tmp/pgduck-cache
           printf "CREATE SECRET minio (TYPE S3, KEY_ID '%s', SECRET '%s', ENDPOINT 'minio:9000', URL_STYLE 'path', USE_SSL false, REGION 'us-east-1', SCOPE 's3://warehouse');\n" \
             "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > /tmp/pgduck-init.sql
-          exec /usr/lib/postgresql/18/bin/pgduck_server \
+          # pas d'exec : en PID 1, pgduck_server ignorerait SIGTERM et chaque arrêt de pod attendrait tout le
+          # délai de grâce (5 min, constaté en CI) ; le shell transmet le signal et attend la fin
+          /usr/lib/postgresql/18/bin/pgduck_server \
             --memory_limit "$PGDUCK_MEMORY_LIMIT" \
             --cache_dir /tmp/pgduck-cache \
-            --init_file_path /tmp/pgduck-init.sql
+            --init_file_path /tmp/pgduck-init.sql &
+          pid=$!
+          trap 'kill -TERM "$pid" 2>/dev/null; wait "$pid"; exit 0' TERM INT
+          wait "$pid"
       env:
         # mémoire maximale de DuckDB : sans limite, il prend 80 % de la mémoire du nœud. Trop basse, la fusion vers
         # Iceberg échoue et pgduck_server S'ARRÊTE (« unrecoverable failure from duckdb ») : 256MB ne suffit pas

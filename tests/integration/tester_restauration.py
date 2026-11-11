@@ -101,7 +101,8 @@ def main():
     manifeste = json.loads(kubectl("get", "postgresql", SOURCE, "-o", "json"))
     uid = manifeste["metadata"]["uid"]
     kubectl("delete", "postgresql", SOURCE, "--wait=true")
-    verifier(attendre("arrêt des pods", lambda: not kubectl("get", "pods", "-l", f"cluster-name={SOURCE}", "-o", "name"), 300),
+    # l'opérateur arrête les pods un par un (délai de grâce de 5 min chacun au pire)
+    verifier(attendre("arrêt des pods", lambda: not kubectl("get", "pods", "-l", f"cluster-name={SOURCE}", "-o", "name"), 900),
              "cluster source supprimé")
     kubectl("delete", "pvc", "-l", f"cluster-name={SOURCE}", "--wait=true")
     verifier(not kubectl("get", "pvc", "-l", f"cluster-name={SOURCE}", "-o", "name"), "volumes du cluster source supprimés")
