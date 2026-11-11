@@ -134,6 +134,9 @@ jobs:
             contexte: python
           - nom: postgres-lake
             contexte: image/postgres-lake
+          - nom: lakehouse-ecrivain
+            contexte: python
+            fichier: python/ecrivain/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -141,6 +144,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.contexte }}
+          file: ${{ matrix.fichier || format('{0}/Dockerfile', matrix.contexte) }}
           push: false
           tags: ${{ matrix.nom }}:ci
           cache-from: type=gha,scope=${{ matrix.nom }}

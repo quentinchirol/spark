@@ -1,0 +1,57 @@
+# Writers : lisent le topic Kafka « app » par lots et écrivent dans le PostgreSQL principal (python/ecrivain).
+# Sans état : n'importe quel pod peut tomber, Kafka réattribue ses partitions aux autres et la lecture reprend
+# au dernier offset validé (un lot rejoué est sans effet). Nombre de pods piloté par KEDA (scaledobject.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecrivain
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ecrivain
+  template:
+    metadata:
+      labels:
+        app: ecrivain
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ecrivain
+      containers:
+        - name: ecrivain
+          image: lakehouse-ecrivain:1.0
+          imagePullPolicy: Never      # image construite localement (python/ecrivain/Dockerfile)
+          env:
+            - name: KAFKA_BOOTSTRAP
+              value: lakehouse-kafka-bootstrap:9092
+            - name: KAFKA_GROUPE
+              value: pg-writer
+            - name: TAILLE_LOT
+              value: "5000"
+            - name: PGHOST
+              value: lake-principal       # Service du primaire, suit les bascules Patroni
+            - name: PGDATABASE
+              value: lake
+            - name: PGSSLMODE
+              value: require
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: lake-writer.lake-principal.credentials.postgresql.acid.zalan.do
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lake-writer.lake-principal.credentials.postgresql.acid.zalan.do
+                  key: password
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

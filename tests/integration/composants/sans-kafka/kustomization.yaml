@@ -1,4 +1,4 @@
-# Retire Kafka (cluster, nœuds, topics) d'un overlay de test qui ne le teste pas.
+# Retire Kafka (cluster, nœuds, topics) et les writers d'un overlay de test qui ne les teste pas.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 patches:
@@ -36,4 +36,18 @@ patches:
       kind: KafkaTopic
       metadata:
         name: app-rejets
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ecrivain
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: keda.sh/v1alpha1
+      kind: ScaledObject
+      metadata:
+        name: ecrivain
         namespace: spark
