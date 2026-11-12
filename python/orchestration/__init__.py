@@ -148,7 +148,7 @@ def retard_evenements() -> int:
     """Messages du topic events pas encore chargés : fin du topic − position enregistrée (début du topic sinon)."""
     from kafka import KafkaConsumer, TopicPartition
     consommateur = KafkaConsumer(bootstrap_servers=KAFKA_BOOTSTRAP, group_id=GROUPE_EVENEMENTS,
-                                 enable_auto_commit=False, request_timeout_ms=15000, api_version_auto_timeout_ms=10000)
+                                 enable_auto_commit=False, request_timeout_ms=15000)
     try:
         partitions = [TopicPartition(TOPIC_EVENEMENTS, p)
                       for p in sorted(consommateur.partitions_for_topic(TOPIC_EVENEMENTS) or [])]

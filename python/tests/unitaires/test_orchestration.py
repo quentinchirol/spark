@@ -188,3 +188,33 @@ def test_capteur_ne_lance_rien_pendant_un_run(monkeypatch, statut):
         instance.create_run_for_job(orchestration.evenements, status=DagsterRunStatus[statut])
         resultat = orchestration.evenements_en_attente(build_sensor_context(instance=instance))
     assert isinstance(resultat, SkipReason) and "en cours" in str(resultat.skip_message)
+
+
+def test_retard_evenements_options_du_client_kafka_valides(monkeypatch):
+    """Les options passées au client Kafka existent dans la version installée (kafka-python les refuse sinon)."""
+    import kafka
+    options_connues = set(kafka.KafkaConsumer.DEFAULT_CONFIG)
+    vues = {}
+
+    class FauxConsommateur:
+        def __init__(self, **options):
+            vues.update(options)
+
+        def partitions_for_topic(self, topic):
+            return {0, 1}
+
+        def end_offsets(self, partitions, timeout_ms=None):
+            return {tp: 100 for tp in partitions}
+
+        def beginning_offsets(self, partitions, timeout_ms=None):
+            return {tp: 10 for tp in partitions}
+
+        def committed(self, tp):
+            return 40 if tp.partition == 0 else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(kafka, "KafkaConsumer", FauxConsommateur)
+    assert orchestration.retard_evenements() == (100 - 40) + (100 - 10)
+    assert set(vues) <= options_connues, set(vues) - options_connues
