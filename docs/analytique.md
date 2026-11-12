@@ -63,12 +63,26 @@ with psycopg.connect(host="localhost", dbname="lake", user="analyste", password=
     df = pd.read_sql("SELECT * FROM gold.ventes_par_jour", conn)
 ```
 
+## Beaucoup d'analystes en même temps
+
+| Situation | Effet |
+|-----------|-------|
+| jusqu'à 8 requêtes à la fois par pod | exécutées tout de suite (PgBouncer : une connexion PostgreSQL par transaction) |
+| davantage | elles **attendent leur tour** dans PgBouncer, sans erreur |
+| attente de plus de **2 minutes** | refus propre : erreur `query_wait_timeout`, à relancer plus tard ; rien ne plante |
+| requête de plus de **2 minutes** | coupée (`statement_timeout`) |
+| CPU du pool au-delà de 70 % de ce qui est réservé | un pod de plus (2 → 8, `HorizontalPodAutoscaler`) ; retour au minimum après 5 min de calme |
+
+Les outils de BI se connectent à PgBouncer comme à PostgreSQL (même port 5432, même base) ; les requêtes préparées
+des pilotes (Npgsql de Power BI, JDBC de Qlik) sont prises en charge. Un paramètre de session (`SET …`) ne dure que le
+temps d'une transaction : passer par les options de connexion de l'outil.
+
 ## Garanties
 
 | Garantie | Comment |
 |----------|---------|
 | lecture seule | rôle `analyste` sans aucun droit d'écriture, transactions en lecture seule par défaut, tables rattachées `read_only`, principal Polaris et clé S3 en lecture seule |
-| requêtes bornées | `statement_timeout` de 120 s, `work_mem` de 64 Mo par opération ; DuckDB limité à 1 Go par pod |
+| requêtes bornées | `statement_timeout` de 120 s, `work_mem` de 64 Mo par opération ; 8 requêtes à la fois par pod ; DuckDB limité à 1 Go par pod, cache disque local |
 | l'application n'est jamais ralentie | aucune connexion au PostgreSQL principal ; pods sur le groupe de nœuds `analytique` (obligatoire sur GKE) |
 | pods jetables | aucun volume persistant : un pod redémarré se resynchronise en quelques secondes |
 
@@ -83,5 +97,19 @@ mesurées sont dans le journal du workflow Integration.
 
 ```bash
 kubectl -n spark logs deploy/lake-analytique -c synchro --tail=20     # « synchro : N table(s)… »
-kubectl -n spark scale deploy/lake-analytique --replicas=4             # plus d'analystes (autoscaling : US-14)
+kubectl -n spark get hpa lake-analytique                               # pods voulus selon le CPU
+kubectl -n spark exec deploy/lake-analytique -c postgres -- /usr/lib/postgresql/18/bin/psql \
+  -h /var/run/postgresql -U postgres -d lake -c "SELECT count(*) FROM pg_stat_activity WHERE usename = 'analyste'"
 ```
+
+## Limites par rôle (toutes les bases)
+
+| Rôle | Base | `statement_timeout` | `work_mem` |
+|------|------|---------------------|------------|
+| `analyste` | pool analytique | 120 s | 64 Mo |
+| `lake_app` (lecture de l'application) | principal | 2 s | 16 Mo |
+| `lake_critique` (actions critiques) | principal | 5 s | 8 Mo |
+| `lake_writer` (writers Kafka) | principal | 60 s | 32 Mo |
+
+DuckDB (`pgduck_server`) : mémoire bornée (`--memory_limit`, 1 Go) et cache disque local (`--cache_dir`) sur le principal
+et dans chaque pod du pool : jamais les 80 % de la mémoire du nœud qu'il prendrait par défaut.
