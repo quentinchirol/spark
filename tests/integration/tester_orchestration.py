@@ -198,7 +198,7 @@ def main():
                         len(list(temoin.scan().plan_files())))
         verifier(temoin_apres == temoin_avant, f"table app.temoin (pg_lake) intacte {temoin_apres}")
         messages = " ".join(e.get("message") or "" for e in api.journal(client, run5))
-        verifier("namespace app ignoré" in messages, "namespace app ignoré par la maintenance (journal du run)")
+        verifier("namespaces ignorés : app" in messages, "namespace app ignoré par la maintenance (journal du run)")
         verifier(gold_par_jour(cat) == gold_avant and len(lignes(cat, "bronze.ventes")) == bronze_avant,
                  "tables ventes : contenu inchangé après maintenance")
 

@@ -74,7 +74,8 @@ def tout(spark):
             print(f"maintenance : {table} : ÉCHEC {type(erreur).__name__}: {str(erreur)[:500]}", flush=True)
     if echecs:
         sys.exit(f"maintenance : {len(echecs)} table(s) en échec : {', '.join(echecs)}")
-    print("maintenance : terminée", flush=True)
+    # résumé en dernière ligne : toujours dans la fin du journal recopiée dans Dagster
+    print(f"maintenance : terminée (namespaces ignorés : {', '.join(sorted(EXCLUS)) or 'aucun'})", flush=True)
 
 
 if __name__ == "__main__":
