@@ -1,6 +1,7 @@
 # Tests d'intégration sur un vrai cluster Kubernetes (kind), un job par sujet :
 #   - stockage : MinIO (4 pods) + Polaris (2 pods) : table lisible, 1 pod MinIO arrêté, droits du principal trino ;
 #   - postgres : PostgreSQL principal (Zalando + pg_lake) : réplication synchrone, vue chaud + froid,
+#                pool analytique en lecture seule (tables du catalogue, données de l'application en < 2 min),
 #                fusion planifiée vers Iceberg, lecture des mêmes lignes par un autre moteur via Polaris ;
 #                sauvegardes WAL-G hors cluster et restauration à un instant donné dans un cluster neuf ;
 #   - ecriture : passerelle → Kafka → writers (KEDA) → PostgreSQL : ni perte ni doublon malgré un writer tué,
@@ -116,6 +117,7 @@ jobs:
           kubectl -n spark wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=300s
           kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=600s
           kubectl -n spark wait --for=condition=complete job/lake-schema --timeout=300s
+          kubectl -n spark rollout status deploy/lake-analytique --timeout=300s
           kubectl -n spark get pods -o wide
       - uses: actions/setup-python@v5
         with:
@@ -123,15 +125,17 @@ jobs:
       - name: Test d'intégration
         run: |
           echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
-          pip install "pyiceberg[pyarrow]"
+          pip install "pyiceberg[pyarrow]" "psycopg[binary]"
           python tests/integration/tester_postgres.py
+      - name: Pool analytique (lecture seule, Power BI / Qlik)
+        run: python tests/integration/tester_analytique.py
       - name: Sauvegardes et restauration à un instant donné
         run: python tests/integration/tester_restauration.py
       - name: Diagnostic en cas d'échec
         if: failure() || cancelled()
         run: |
           kubectl -n spark get pods,jobs,postgresql -o wide || true
-          for r in deploy/postgres-operator job/lake-schema job/polaris-init deploy/polaris; do
+          for r in deploy/postgres-operator job/lake-schema job/polaris-init deploy/polaris deploy/lake-analytique; do
             echo "::group::logs $r"; kubectl -n spark logs "$r" --all-containers --tail=80 --prefix || true; echo "::endgroup::"
           done
           for p in $(kubectl -n spark get pods -l 'cluster-name in (lake-principal,lake-restaure)' -o name); do

@@ -1,0 +1,209 @@
+# Pool analytique : PostgreSQL + pg_lake en LECTURE SEULE, sans données propres (US-13, docs/analytique.md).
+# Chaque pod lit les tables Iceberg du catalogue « lake » via Polaris (fichiers dans MinIO, clé S3 en lecture
+# seule) : bronze, silver, gold, events et les tables app.* fusionnées par le PostgreSQL principal, qui n'est
+# JAMAIS sollicité. Pods identiques et jetables (aucun volume persistant) : on en ajoute ou on en retire à volonté.
+#   - postgres : PostgreSQL 18 + pg_lake (image postgres-lake, sans Patroni : rien à répliquer) ;
+#   - pgduck   : moteur DuckDB de pg_lake (mémoire bornée, cache disque) ;
+#   - synchro  : rattache chaque minute les tables du catalogue (synchro.py), rôle « analyste » en lecture seule.
+# Connexion (Power BI, Qlik, DBeaver, notebooks) : connecteur PostgreSQL, base « lake », utilisateur « analyste ».
+apiVersion: v1
+kind: Service
+metadata:
+  name: lake-analytique
+spec:
+  selector:
+    app: lake-analytique
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lake-analytique
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: lake-analytique
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lake-analytique
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lake-analytique
+  template:
+    metadata:
+      labels:
+        app: lake-analytique
+    spec:
+      # utilisateur postgres de l'image (Spilo) ; mêmes droits pour PostgreSQL, pgduck_server et la synchro
+      securityContext:
+        runAsUser: 101
+        runAsGroup: 103
+        fsGroup: 103
+      # groupe de nœuds « analytique » (infra/gke/creer-cluster.sh) : jamais sur les nœuds de l'application.
+      # Préféré ici (kind n'a qu'un nœud), obligatoire sur GKE (infra/gke/manifestes)
+      tolerations:
+        - key: role
+          operator: Equal
+          value: analytique
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: role
+                    operator: In
+                    values: [analytique]
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: lake-analytique
+      containers:
+        - name: postgres
+          image: postgres-lake:18
+          imagePullPolicy: Never      # image construite localement (image/postgres-lake) ; GKE : ghcr.io
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export PGDATA=/home/postgres/pgdata/analytique
+              if [ ! -s "$PGDATA/PG_VERSION" ]; then
+                /usr/lib/postgresql/18/bin/initdb -D "$PGDATA" -U postgres --encoding=UTF8 --locale=C.UTF-8 \
+                  --auth-local=trust --auth-host=scram-sha-256 >/dev/null
+                cat >> "$PGDATA/postgresql.conf" <<'CONF'
+              listen_addresses = '*'
+              unix_socket_directories = '/var/run/postgresql'
+              shared_preload_libraries = 'pg_extension_base'
+              max_connections = 60
+              shared_buffers = 128MB
+              password_encryption = scram-sha-256
+              # tables rattachées en lecture seule : rien à compacter ni à nettoyer ici
+              pg_lake_iceberg.autovacuum = off
+              log_connections = on
+              log_min_duration_statement = 10s
+              CONF
+                echo "host all all 0.0.0.0/0 scram-sha-256" >> "$PGDATA/pg_hba.conf"
+              fi
+              exec /usr/lib/postgresql/18/bin/postgres -D "$PGDATA"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            # prêt quand PostgreSQL répond ET que les tables du catalogue ont été rattachées une première fois
+            exec:
+              command: ["/bin/sh", "-c", "test -f /var/run/postgresql/synchro-ok && /usr/lib/postgresql/18/bin/pg_isready -q -h /var/run/postgresql"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/usr/lib/postgresql/18/bin/pg_isready", "-q", "-h", "/var/run/postgresql"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          volumeMounts:
+            - name: donnees
+              mountPath: /home/postgres/pgdata
+            - name: socket
+              mountPath: /var/run/postgresql
+            - name: pgduck
+              mountPath: /tmp
+        - name: pgduck
+          image: postgres-lake:18
+          imagePullPolicy: Never
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              # clé S3 en LECTURE SEULE (utilisateur MinIO « trino ») : fichier dans le volume du pod, jamais dans l'image
+              umask 077
+              mkdir -p /tmp/pgduck-cache
+              printf "CREATE SECRET minio (TYPE S3, KEY_ID '%s', SECRET '%s', ENDPOINT 'minio:9000', URL_STYLE 'path', USE_SSL false, REGION 'us-east-1', SCOPE 's3://warehouse');\n" \
+                "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > /tmp/pgduck-init.sql
+              /usr/lib/postgresql/18/bin/pgduck_server \
+                --memory_limit "$PGDUCK_MEMORY_LIMIT" \
+                --cache_dir /tmp/pgduck-cache \
+                --init_file_path /tmp/pgduck-init.sql &
+              pid=$!
+              trap 'kill -TERM "$pid" 2>/dev/null; wait "$pid"; exit 0' TERM INT
+              wait "$pid"
+          env:
+            # mémoire maximale de DuckDB (sans limite : 80 % de la mémoire du nœud) ; limite du conteneur au-dessus
+            - name: PGDUCK_MEMORY_LIMIT
+              value: 1GB
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-trino
+                  key: TRINO_S3_ACCESS_KEY
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-trino
+                  key: TRINO_S3_SECRET_KEY
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+          volumeMounts:
+            - name: pgduck
+              mountPath: /tmp
+        - name: synchro
+          image: postgres-lake:18
+          imagePullPolicy: Never
+          command: ["python3", "/synchro/synchro.py"]
+          env:
+            - name: POLARIS_URL
+              value: http://polaris:8181/api/catalog
+            # principal Polaris « trino » : rôle lecture seule sur le catalogue
+            - name: POLARIS_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-trino
+                  key: POLARIS_CREDENTIAL
+            - name: ANALYTIQUE_MOT_DE_PASSE
+              valueFrom:
+                secretKeyRef:
+                  name: lake-analytique
+                  key: ANALYTIQUE_MOT_DE_PASSE
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: socket
+              mountPath: /var/run/postgresql
+            - name: synchro
+              mountPath: /synchro
+      volumes:
+        - name: donnees
+          emptyDir: {}
+        - name: socket
+          emptyDir: {}
+        - name: pgduck
+          emptyDir: {}
+        - name: synchro
+          configMap:
+            name: analytique-synchro

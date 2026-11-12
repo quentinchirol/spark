@@ -9,6 +9,7 @@ kind: Kustomization
 resources:
   - ../../../k8s
 components:
+  - ../composants/sans-analytique
   - ../composants/sans-ecriture
   - ../composants/kafka-reduit
   - ../composants/stockage-reduit

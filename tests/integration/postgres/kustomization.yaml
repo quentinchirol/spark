@@ -49,6 +49,24 @@ patches:
       - op: replace
         path: /spec/postgresql/parameters/pg_lake_iceberg.autovacuum_naptime
         value: "60"
+  # pool analytique : 1 pod, demandes réduites (les limites ne changent pas)
+  - target:
+      kind: Deployment
+      name: lake-analytique
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 50m, memory: 256Mi}
+      - op: replace
+        path: /spec/template/spec/containers/1/resources/requests
+        value: {cpu: 25m, memory: 256Mi}
+      # synchronisation toutes les 20 s (60 en production) : le test attend l'apparition d'une nouvelle table
+      - op: add
+        path: /spec/template/spec/containers/2/env/-
+        value: {name: INTERVALLE_S, value: "20"}
   - target:
       kind: StatefulSet
       name: minio

@@ -75,7 +75,7 @@ echo "==> Attente des composants"
 kubectl -n "$NS" rollout status sts/minio --timeout=10m
 kubectl -n "$NS" wait --for=condition=complete job/minio-init job/polaris-bootstrap job/polaris-init --timeout=10m
 kubectl -n "$NS" wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal postgresql/lake-outils --timeout=15m
-for d in polaris spark-connect trino ecrivain passerelle dagster-code dagster-webserver dagster-daemon; do
+for d in polaris spark-connect trino ecrivain passerelle dagster-code dagster-webserver dagster-daemon lake-analytique; do
   kubectl -n "$NS" rollout status "deploy/$d" --timeout=10m
 done
 

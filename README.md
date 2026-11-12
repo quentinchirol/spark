@@ -242,6 +242,13 @@ Les tables Iceberg sont entretenues automatiquement : chaque nuit pour celles é
 derniers snapshots gardés, fichiers orphelins supprimés), en continu par pg_lake pour les tables `app.*` :
 [docs/maintenance.md](docs/maintenance.md).
 
+## Pool analytique : SQL pour Power BI, Qlik et les notebooks
+
+`lake-analytique` : PostgreSQL + pg_lake en **lecture seule**, sans données propres. Il lit directement les tables
+Iceberg du catalogue (gold, silver, bronze, et les données de l'application en moins de 2 minutes) ; le PostgreSQL
+principal n'est jamais sollicité. Connexion avec le connecteur PostgreSQL (DirectQuery), base `lake`, utilisateur
+`analyste` : [docs/analytique.md](docs/analytique.md).
+
 ## Stockage et catalogue : MinIO + Polaris
 
 - **MinIO** (`http://minio:9000`) : 4 pods, 1 volume chacun, codage d'effacement. Un pod arrêté ne gêne ni la lecture ni
