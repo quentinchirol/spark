@@ -7,3 +7,4 @@ httpx
 asyncpg==0.30.0
 dagster==1.13.29
 dagster-k8s==0.29.29
+kafka-python==3.0.13

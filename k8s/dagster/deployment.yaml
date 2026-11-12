@@ -129,6 +129,9 @@ spec:
               value: spark-lakehouse:4.1.3
             - name: POLITIQUE_TIRAGE_IMAGES
               value: Never
+            # topic « events » (capteur du retard, traitement evenements.py)
+            - name: KAFKA_BOOTSTRAP
+              value: lakehouse-kafka-bootstrap:9092
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
