@@ -105,7 +105,8 @@ def journal(client, run_id):
         page = graphql(client, JOURNAL, id=run_id, curseur=curseur)["logsForRun"]
         if page["__typename"] != "EventConnection":
             raise RuntimeError(f"journal du run illisible : {page}")
-        tous += [e for e in page["events"] if e.get("eventType")]
+        # tous les événements, y compris les messages de context.log (sans eventType)
+        tous += page["events"]
         curseur = page["cursor"]
         if not page["hasMore"]:
             return tous
@@ -115,14 +116,14 @@ def essais(client, run_id):
     """Nombre de tentatives de chaque étape : 1 démarrage (STEP_START) + les relances (STEP_RESTARTED)."""
     compte = {}
     for e in journal(client, run_id):
-        if e["eventType"] in ("STEP_START", "STEP_RESTARTED"):
+        if e.get("eventType") in ("STEP_START", "STEP_RESTARTED"):
             compte[e["stepKey"]] = compte.get(e["stepKey"], 0) + 1
     return compte
 
 
 def journal_echec(client, run_id):
     for e in journal(client, run_id):
-        if e["eventType"] in ("STEP_FAILURE", "RUN_FAILURE", "ENGINE_EVENT") and e.get("message"):
+        if e.get("eventType") in ("STEP_FAILURE", "RUN_FAILURE", "ENGINE_EVENT") and e.get("message"):
             print(f"     {e['eventType']} {e.get('stepKey') or ''} : {e['message'][:600]}")
 
 

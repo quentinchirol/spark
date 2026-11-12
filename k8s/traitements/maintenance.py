@@ -37,11 +37,12 @@ def nb_snapshots(spark, table):
 
 
 def entretenir(spark, table):
-    compaction = spark.sql(f"""CALL lake.system.rewrite_data_files(table => '{table}',
+    # nom complet (lake.<namespace>.<table>) : sinon Spark essaie d'abord <namespace> comme nom de catalogue
+    compaction = spark.sql(f"""CALL lake.system.rewrite_data_files(table => 'lake.{table}',
         options => map('min-input-files', '2', 'partial-progress.enabled', 'true'))""").first()
-    manifests = spark.sql(f"CALL lake.system.rewrite_manifests(table => '{table}')").first()
+    manifests = spark.sql(f"CALL lake.system.rewrite_manifests(table => 'lake.{table}')").first()
     maintenant = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    expiration = spark.sql(f"""CALL lake.system.expire_snapshots(table => '{table}',
+    expiration = spark.sql(f"""CALL lake.system.expire_snapshots(table => 'lake.{table}',
         older_than => TIMESTAMP '{maintenant}', retain_last => {GARDES})""").first()
     # API Java directement (et non la procédure remove_orphan_files, qui refuse un délai de moins de 24 h) ;
     # listage par l'API S3 d'Iceberg (prefix listing) : pas de système de fichiers Hadoop pour s3:// dans l'image
