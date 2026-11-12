@@ -235,6 +235,9 @@ Dagster lance les traitements planifiés ou à la demande : chaque étape (bronz
 allumé entre deux exécutions. Interface : `kubectl -n spark port-forward svc/dagster-webserver 3000:3000`. Traitement
 « ventes », garanties et ajout d'un traitement : [docs/traitements.md](docs/traitements.md).
 
+Les événements du topic Kafka `events` arrivent dans `lake.bronze.events` sans perte ni doublon, en moins de 15 min :
+un capteur Dagster lance le chargement quand le retard dépasse le seuil (ou 10 min après le précédent).
+
 ## Stockage et catalogue : MinIO + Polaris
 
 - **MinIO** (`http://minio:9000`) : 4 pods, 1 volume chacun, codage d'effacement. Un pod arrêté ne gêne ni la lecture ni

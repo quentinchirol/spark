@@ -88,7 +88,8 @@ writer, un pod passerelle et un nœud Kafka ; vérifier ensuite `SELECT count(*)
 - KEDA : 1 → 4 writers pendant la rafale, retour à 1 au bout de 21 s de calme ;
 - k6 à 200 écritures/s pendant 30 s : p99 **123 ms**, 0 % d'échec.
 
-- pendant la rafale (file Kafka chargée), 50 actions critiques : chacune lisible en base dès sa réponse, p99 mesuré
-  par le test (voir le journal du workflow Integration) ; une action critique envoyée sur le chemin Kafka finit en rejet.
+- pendant la rafale (writers en pause : **60 000 messages en attente** dans Kafka), 50 actions critiques : chacune
+  lisible en base dès sa réponse, p99 **8 ms** (médiane 2 ms, port-forward compris) ; une action critique envoyée sur
+  le chemin Kafka finit en rejet.
 
 **Le débit de 10 000/s n'a pas encore été mesuré** : il demande le cluster GKE (procédure ci-dessus).
