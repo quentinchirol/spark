@@ -97,7 +97,9 @@ def lancer(requetes, resultats):
 
 
 def main():
-    tunnels = [tunnel("svc/lake-analytique", PORT_POOL, 5432), tunnel("svc/lake-principal", PORT_PRINCIPAL, 5432)]
+    # le Service lake-principal n'a pas de sélecteur (points d'accès tenus par Patroni) : tunnel vers le primaire
+    primaire = kubectl("get", "pods", "-l", "cluster-name=lake-principal,spilo-role=master", "-o", "name").split()[0]
+    tunnels = [tunnel("svc/lake-analytique", PORT_POOL, 5432), tunnel(primaire, PORT_PRINCIPAL, 5432)]
     try:
         app = LatenceApplication(mot_de_passe_app())
         app.start()
