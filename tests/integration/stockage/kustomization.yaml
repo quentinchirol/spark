@@ -6,6 +6,7 @@ kind: Kustomization
 resources:
   - ../../../k8s
 components:
+  - ../composants/sans-analytique
   - ../composants/sans-kafka
   - ../composants/sans-dagster
 patches:
