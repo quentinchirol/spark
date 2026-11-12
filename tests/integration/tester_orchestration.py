@@ -7,7 +7,9 @@
   3. échec provoqué PENDANT l'écriture de gold : l'étape est essayée 3 fois puis le run échoue ; la table gold n'a
      pas bougé (aucune donnée partielle) ; le run suivant, normal, rattrape ;
   4. à la fin, plus aucun pod de traitement ni executor, et les Jobs Kubernetes disparaissent ;
-  5. dans Dagster : l'historique des runs et leur résultat ; la planification horaire s'active (prochain lancement
+  5. maintenance (US-12) : 15 petits fichiers compactés en 1, 10 derniers snapshots gardés, fichier orphelin
+     supprimé ; une table du namespace « app » (celui de pg_lake) n'est pas touchée ; tables ventes inchangées ;
+  6. dans Dagster : l'historique des runs et leur résultat ; la planification horaire s'active (prochain lancement
      prévu) et les démons (planificateur, file d'attente) sont en bonne santé. Les runs du test sont lancés par
      l'API : ils suivent le même chemin qu'un run planifié (file d'attente → démon → serveur de code → Jobs
      Kubernetes), seul le déclencheur diffère. La planification est arrêtée pendant le test (PLANIFICATIONS=arretees,
@@ -21,6 +23,7 @@ import time
 from decimal import Decimal
 
 import httpx
+import pyarrow as pa
 from pyarrow import fs
 
 import dagster_api as api
@@ -155,7 +158,51 @@ def main():
             time.sleep(5)
         verifier(reste == (0, 0, 0), f"plus rien ne tourne (pods, executors, Jobs : {reste})")
 
-        print("5. Dagster : historique et résultat des runs, planification active, démons en bonne santé")
+        print("5. Maintenance : compaction, 10 snapshots gardés, orphelins supprimés ; tables app.* (pg_lake) intactes")
+        ecriture = catalogue(env("polaris-spark.env")["POLARIS_CREDENTIAL"],
+                             (s3_spark["AWS_ACCESS_KEY_ID"], s3_spark["AWS_SECRET_ACCESS_KEY"]))
+        schema = pa.schema([("n", pa.int64())])
+        for namespace in ("essai", "app"):
+            ecriture.create_namespace_if_not_exists(namespace)
+        petits = ecriture.create_table_if_not_exists("essai.petits_fichiers", schema=schema)
+        for i in range(15):       # 15 écritures : 15 petits fichiers, 15 snapshots
+            petits.append(pa.table({"n": list(range(i * 10, i * 10 + 10))}, schema=schema))
+        # « app » : namespace des tables écrites par pg_lake, que la maintenance Spark ne doit jamais toucher
+        temoin = ecriture.create_table_if_not_exists("app.temoin", schema=schema)
+        for i in range(3):
+            temoin.append(pa.table({"n": [i]}, schema=schema))
+        petits.refresh()
+        temoin.refresh()
+        avant = len(list(petits.scan().plan_files()))
+        verifier(avant == 15 and len(petits.metadata.snapshots) == 15, f"essai.petits_fichiers : {avant} fichiers, "
+                 f"{len(petits.metadata.snapshots)} snapshots avant la maintenance")
+        orphelin = petits.location().removeprefix("s3://") + "/data/orphelin-ecriture-echouee.parquet"
+        with s3.open_output_stream(orphelin) as flux:
+            flux.write(b"fichier jamais reference par un snapshot")
+        temoin_avant = (temoin.current_snapshot().snapshot_id, len(temoin.metadata.snapshots),
+                        len(list(temoin.scan().plan_files())))
+        gold_avant, bronze_avant = gold_par_jour(cat), len(lignes(cat, "bronze.ventes"))
+        run5 = api.lancer_run(client, "maintenance")
+        statut5 = attendre_run(client, run5)
+        if statut5 != "SUCCESS":
+            journal_echec(client, run5)
+        verifier(statut5 == "SUCCESS", "maintenance réussie")
+        petits.refresh()
+        apres = len(list(petits.scan().plan_files()))
+        verifier(apres == 1, f"petits fichiers compactés ({avant} → {apres})")
+        verifier(len(petits.scan().to_arrow()) == 150, "aucune ligne perdue par la compaction (150)")
+        verifier(len(petits.metadata.snapshots) == 10, f"10 derniers snapshots gardés ({len(petits.metadata.snapshots)})")
+        verifier(s3.get_file_info(orphelin).type == fs.FileType.NotFound, "fichier orphelin supprimé")
+        temoin.refresh()
+        temoin_apres = (temoin.current_snapshot().snapshot_id, len(temoin.metadata.snapshots),
+                        len(list(temoin.scan().plan_files())))
+        verifier(temoin_apres == temoin_avant, f"table app.temoin (pg_lake) intacte {temoin_apres}")
+        messages = " ".join(e.get("message") or "" for e in api.journal(client, run5))
+        verifier("namespace app ignoré" in messages, "namespace app ignoré par la maintenance (journal du run)")
+        verifier(gold_par_jour(cat) == gold_avant and len(lignes(cat, "bronze.ventes")) == bronze_avant,
+                 "tables ventes : contenu inchangé après maintenance")
+
+        print("6. Dagster : historique et résultat des runs, planification active, démons en bonne santé")
         historique = api.runs(client, "ventes")
         statuts = {r["runId"]: r["status"] for r in historique}
         attendu_runs = {run1: "SUCCESS", run2: "SUCCESS", run3: "FAILURE", run4: "SUCCESS"}

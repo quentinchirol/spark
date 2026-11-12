@@ -6,7 +6,9 @@ Vérifie :
   3. une écriture acceptée est lisible dans la vue en moins d'une seconde ;
   4. la fusion planifiée (pg_cron, chaque minute) vide la table chaude vers Iceberg, la vue ne change pas ;
   5. un autre moteur (pyiceberg, principal spark) lit les mêmes lignes dans Polaris, sans copie ;
-  6. une ligne froide modifiée est visible tout de suite, et dans Iceberg après la fusion.
+  6. une ligne froide modifiée est visible tout de suite, et dans Iceberg après la fusion ;
+  7. (US-12) pg_lake compacte lui-même ses tables Iceberg (autovacuum, chaque minute en CI), pendant que la fusion
+     planifiée continue : aucune maintenance Spark n'est nécessaire sur app.*.
 
     echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
     python tests/integration/tester_postgres.py
@@ -107,6 +109,25 @@ def main():
         verifier(True, "la fusion planifiée (pg_cron) a vidé la table chaude")
         verifier(any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()),
                  "modification appliquée à Iceberg, lue par pyiceberg")
+
+        # --- (US-12) pg_lake entretient lui-même ses tables -----------------------------------------------
+        def fichiers():
+            return len(list(spark.load_table(f"app.{TABLE}").scan().plan_files()))
+        nouveaux = []
+        for n in range(8):         # 8 fusions : au moins 8 nouveaux petits fichiers
+            i = str(uuid.uuid4())
+            nouveaux.append(i)
+            sql(pod, f"SELECT lake.ecrire_lot('{TABLE}', {lot((i, 'INSERT', 100 + n, 'carla', n, 'ouverte'))})")
+            sql(pod, f"SELECT lake.fusionner('{TABLE}')")
+        avant = fichiers()
+        verifier(avant >= 8, f"{avant} fichiers de données dans app.{TABLE} après 8 fusions")
+        if not attendre("compaction par l'autovacuum de pg_lake", lambda: fichiers() <= 2, delai=300):
+            print(sql(pod, "SELECT name, setting FROM pg_settings WHERE name LIKE 'pg_lake_iceberg.autovacuum%'"))
+            verifier(False, f"pg_lake a compacté app.{TABLE} ({fichiers()} fichiers)")
+        verifier(True, f"pg_lake a compacté app.{TABLE} lui-même ({avant} → {fichiers()} fichiers)")
+        lus = {str(r["id"]) for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()}
+        verifier(set(nouveaux) | {a, b} <= lus and sql(pod, f"SELECT count(*) FROM vue.{TABLE}") == str(len(lus)),
+                 "aucune ligne perdue par la compaction, vue identique")
     finally:
         for processus in tunnels:
             processus.terminate()

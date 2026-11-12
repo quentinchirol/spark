@@ -1,4 +1,5 @@
-# Orchestration pour la CI : Dagster (+ sa base lake-outils) lance le traitement Spark « ventes » sur MinIO + Polaris.
+# Orchestration pour la CI : Dagster (+ sa base lake-outils) lance les traitements Spark « ventes » et « maintenance »
+# sur MinIO + Polaris.
 # Sans Spark Connect, Trino, traitement planifié, PostgreSQL principal ni Kafka ; réduit pour un runner GitHub
 # (2 cœurs, 7 Go) : 1 instance PostgreSQL, CPU réservé minimal, Jobs supprimés 20 s après leur fin.
 # Nécessite k8s/operateurs.
@@ -55,3 +56,7 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: {name: CAPTEURS, value: arretes}
+      # orphelins supprimés quel que soit leur âge (en production : après 72 h) : celui posé par le test a 1 min
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: ORPHELINS_APRES_H, value: "0"}
