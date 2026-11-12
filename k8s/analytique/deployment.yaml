@@ -1,10 +1,13 @@
-# Pool analytique : PostgreSQL + pg_lake en LECTURE SEULE, sans données propres (US-13, docs/analytique.md).
+# Pool analytique : PostgreSQL + pg_lake en LECTURE SEULE, sans données propres (US-13, US-14, docs/analytique.md).
 # Chaque pod lit les tables Iceberg du catalogue « lake » via Polaris (fichiers dans MinIO, clé S3 en lecture
 # seule) : bronze, silver, gold, events et les tables app.* fusionnées par le PostgreSQL principal, qui n'est
 # JAMAIS sollicité. Pods identiques et jetables (aucun volume persistant) : on en ajoute ou on en retire à volonté.
 #   - postgres : PostgreSQL 18 + pg_lake (image postgres-lake, sans Patroni : rien à répliquer) ;
 #   - pgduck   : moteur DuckDB de pg_lake (mémoire bornée, cache disque) ;
-#   - synchro  : rattache chaque minute les tables du catalogue (synchro.py), rôle « analyste » en lecture seule.
+#   - synchro  : rattache chaque minute les tables du catalogue (synchro.py), rôle « analyste » en lecture seule ;
+#   - pgbouncer : seule porte d'entrée (Service) : 8 requêtes au plus en même temps par pod, les autres attendent
+#                leur tour ; au-delà de 2 min d'attente, refus propre (query_wait_timeout).
+# Pods ajoutés quand le CPU du pool monte (HorizontalPodAutoscaler, 2 → 8).
 # Connexion (Power BI, Qlik, DBeaver, notebooks) : connecteur PostgreSQL, base « lake », utilisateur « analyste ».
 apiVersion: v1
 kind: Service
@@ -14,9 +17,10 @@ spec:
   selector:
     app: lake-analytique
   ports:
+    # le port PostgreSQL habituel, servi par PgBouncer (file d'attente) et non directement par PostgreSQL
     - name: postgres
       port: 5432
-      targetPort: postgres
+      targetPort: pgbouncer
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -197,6 +201,64 @@ spec:
               mountPath: /var/run/postgresql
             - name: synchro
               mountPath: /synchro
+        - name: pgbouncer
+          image: edoburu/pgbouncer:v1.25.2-p0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # mot de passe dans le volume du conteneur, jamais dans l'image ni dans la ConfigMap
+              umask 077
+              printf '"analyste" "%s"\n' "$ANALYTIQUE_MOT_DE_PASSE" > /tmp/userlist.txt
+              cat > /tmp/pgbouncer.ini <<INI
+              [databases]
+              lake = host=/var/run/postgresql port=5432 dbname=lake
+              [pgbouncer]
+              listen_addr = 0.0.0.0
+              listen_port = 6432
+              unix_socket_dir =
+              auth_type = scram-sha-256
+              auth_file = /tmp/userlist.txt
+              ; une connexion PostgreSQL par transaction : PLACES requêtes au plus en même temps dans ce pod
+              pool_mode = transaction
+              default_pool_size = $PLACES
+              max_db_connections = $PLACES
+              max_client_conn = 400
+              ; attente d'une place au-delà de ATTENTE_MAX_S secondes : erreur « query_wait_timeout », rien ne plante
+              query_wait_timeout = $ATTENTE_MAX_S
+              ; requêtes préparées des pilotes (Npgsql de Power BI, JDBC) en mode transaction
+              max_prepared_statements = 200
+              ignore_startup_parameters = extra_float_digits,options,search_path
+              log_connections = 0
+              log_disconnections = 0
+              INI
+              exec "$(command -v pgbouncer || echo /usr/bin/pgbouncer)" /tmp/pgbouncer.ini
+          env:
+            - name: PLACES
+              value: "8"
+            - name: ATTENTE_MAX_S
+              value: "120"
+            - name: ANALYTIQUE_MOT_DE_PASSE
+              valueFrom:
+                secretKeyRef:
+                  name: lake-analytique
+                  key: ANALYTIQUE_MOT_DE_PASSE
+          ports:
+            - name: pgbouncer
+              containerPort: 6432
+          readinessProbe:
+            tcpSocket:
+              port: pgbouncer
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: socket
+              mountPath: /var/run/postgresql
       volumes:
         - name: donnees
           emptyDir: {}
@@ -207,3 +269,27 @@ spec:
         - name: synchro
           configMap:
             name: analytique-synchro
+---
+# Autoscaling : un pod de plus dès que le CPU moyen dépasse 70 % de ce qui est réservé (requêtes DuckDB et
+# PostgreSQL) ; retour progressif au minimum au calme. Sur GKE, le groupe de nœuds analytique grandit avec.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: lake-analytique
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lake-analytique
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300

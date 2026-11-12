@@ -67,6 +67,28 @@ patches:
       - op: add
         path: /spec/template/spec/containers/2/env/-
         value: {name: INTERVALLE_S, value: "20"}
+      # CPU du pool plafonné à 1/2 cœur par conteneur sur le runner à 2 cœurs : le reste du cluster garde sa part,
+      # et une charge analytique dépasse vite la cible de l'autoscaling
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/1/resources/limits/cpu
+        value: 500m
+      # attente maximale d'une place ramenée de 120 à 20 s pour tester le refus sans attendre 2 minutes
+      - op: replace
+        path: /spec/template/spec/containers/3/env/1/value
+        value: "20"
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: lake-analytique
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
   - target:
       kind: StatefulSet
       name: minio

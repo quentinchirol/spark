@@ -16,3 +16,10 @@ patches:
       metadata:
         name: lake-analytique
         namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: lake-analytique
+        namespace: spark
