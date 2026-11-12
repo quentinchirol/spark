@@ -54,6 +54,7 @@ configMapGenerator:
       - traitements/spark-defaults.conf
       - traitements/lancer.sh
       - traitements/ventes.py
+      - traitements/evenements.py
     options:
       # nom fixe : référencé par les Jobs créés par Dagster (python/orchestration), hors de kustomize
       disableNameSuffixHash: true

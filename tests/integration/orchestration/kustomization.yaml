@@ -9,6 +9,8 @@ resources:
   - ../../../k8s
 components:
   - ../composants/sans-kafka
+  - ../composants/stockage-reduit
+  - ../composants/dagster-reduit
 patches:
   - patch: |-
       $patch: delete
@@ -45,58 +47,11 @@ patches:
       metadata:
         name: lake-schema
         namespace: spark
-  - target:
-      kind: postgresql
-      name: lake-outils
-    patch: |-
-      - op: replace
-        path: /spec/numberOfInstances
-        value: 1
-      - op: replace
-        path: /spec/resources/requests
-        value: {cpu: 50m, memory: 256Mi}
-      - op: replace
-        path: /spec/volume/size
-        value: 1Gi
+  # pas de Kafka dans ce test : capteur du topic « events » arrêté (tests/integration/evenements le vérifie)
   - target:
       kind: Deployment
       name: dagster-code
     patch: |-
       - op: add
         path: /spec/template/spec/containers/0/env/-
-        value: {name: CPU_PILOTE, value: 100m}
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: CPU_EXECUTEUR, value: 100m}
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: DUREE_VIE_JOBS_S, value: "20"}
-      # planification arrêtée au départ : un run planifié à h+5 se mêlerait aux runs du test (le test l'active à la fin)
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: PLANIFICATIONS, value: arretees}
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests
-        value: {cpu: 50m, memory: 384Mi}
-  - target:
-      kind: Deployment
-      name: dagster-(webserver|daemon)
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests
-        value: {cpu: 25m, memory: 192Mi}
-  # demandes de mémoire réduites (les limites ne changent pas) : le pilote et l'executor Spark réservent 1,5 Gi chacun
-  - target:
-      kind: StatefulSet
-      name: minio
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests
-        value: {cpu: 25m, memory: 128Mi}
-  - target:
-      kind: Deployment
-      name: polaris
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests
-        value: {cpu: 50m, memory: 384Mi}
+        value: {name: CAPTEURS, value: arretes}

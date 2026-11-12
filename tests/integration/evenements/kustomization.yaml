@@ -1,0 +1,67 @@
+# Événements pour la CI : Kafka (topic events) → traitement Spark lancé par le capteur Dagster → lake.bronze.events.
+# Sans Spark Connect, Trino, traitement planifié, PostgreSQL principal, writers ni passerelle ; réduit pour un runner
+# GitHub (2 cœurs, 7 Go) : 1 nœud Kafka, 1 instance PostgreSQL (Dagster), CPU et mémoire réservés minimaux.
+# Seuil et délai du capteur abaissés pour le test, lots de 150 messages par partition (plusieurs lots par run).
+# Nécessite k8s/operateurs.
+#   kubectl apply -k tests/integration/evenements
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../k8s
+components:
+  - ../composants/sans-ecriture
+  - ../composants/kafka-reduit
+  - ../composants/stockage-reduit
+  - ../composants/dagster-reduit
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: spark-connect
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: trino
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: pipeline-dashboard
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: acid.zalan.do/v1
+      kind: postgresql
+      metadata:
+        name: lake-principal
+        namespace: spark
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: lake-schema
+        namespace: spark
+  - target:
+      kind: Deployment
+      name: dagster-code
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: SEUIL_EVENEMENTS, value: "5000"}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: DELAI_MAX_EVENEMENTS_S, value: "90"}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: INTERVALLE_CAPTEUR_S, value: "30"}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MAX_PAR_PARTITION, value: "150"}

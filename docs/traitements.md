@@ -31,6 +31,28 @@ mc alias set lake http://localhost:9000 <AWS_ACCESS_KEY_ID> <AWS_SECRET_ACCESS_K
 mc cp ventes-2026-11-11.csv lake/sources/ventes/
 ```
 
+## Traitement « evenements » (topic Kafka)
+
+Les événements (IoT, journaux, clics) sont envoyés par leurs producteurs dans le topic Kafka `events` (12 partitions).
+Le traitement les charge dans `lake.bronze.events` : `cle`, `valeur` (message brut), `topic`, `partition`, `offset`,
+`horodatage` (Kafka), `_charge_le`.
+
+| Quand | Effet |
+|-------|-------|
+| retard ≥ `SEUIL_EVENEMENTS` (100 000) | le capteur `evenements_en_attente` lance le chargement à sa vérification suivante (chaque minute) |
+| retard plus faible | lancement au plus tard `DELAI_MAX_EVENEMENTS_S` (10 min) après le précédent : un événement est dans bronze en **moins de 15 min** |
+| run en cours ou en file | aucun nouveau run |
+| un run démarre | il lit ce qui est disponible à son démarrage, par lots (`MAX_PAR_PARTITION` messages par partition), un commit Iceberg par lot, puis s'arrête |
+| arrêt brutal (pod, nœud) | la tentative suivante reprend après le dernier lot validé : **aucune perte, aucun doublon** ([décision 003](decisions/003-evenements-position-dans-bronze.md)) |
+| messages supprimés par la rétention Kafka avant chargement | le traitement s'arrête en erreur (perte signalée, jamais sautée) |
+
+Retard actuel (position enregistrée après chaque lot) :
+
+```bash
+kubectl -n spark exec lakehouse-noeuds-0 -- bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+  --describe --group lakehouse-events
+```
+
 ## Lancer, suivre, relancer
 
 ```bash

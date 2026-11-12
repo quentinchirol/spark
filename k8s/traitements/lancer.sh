@@ -15,6 +15,10 @@ ip=$(python3 -c 'import socket; print(socket.gethostbyname(socket.gethostname())
   echo "spark.kubernetes.container.image $SPARK_EXECUTOR_IMAGE"
   echo "spark.kubernetes.container.image.pullPolicy $SPARK_EXECUTOR_PULL_POLICY"
   echo "spark.kubernetes.executor.request.cores ${SPARK_EXECUTOR_REQUEST_CORES:-500m}"
+  # mémoire : tas du pilote, tas et marge (hors tas) de chaque executor ; pod executor = tas + marge
+  echo "spark.driver.memory              ${SPARK_DRIVER_MEMORY:-1g}"
+  echo "spark.executor.memory            ${SPARK_EXECUTOR_MEMORY:-1g}"
+  echo "spark.executor.memoryOverhead    ${SPARK_EXECUTOR_MEMORY_OVERHEAD:-512m}"
   echo "spark.sql.catalog.lake.credential $POLARIS_CREDENTIAL"
 } >> "$conf/spark-defaults.conf"
 export SPARK_CONF_DIR="$conf"

@@ -1,0 +1,19 @@
+# MinIO et Polaris : demandes de CPU et de mémoire réduites (les limites ne changent pas) pour laisser de la place
+# aux pilotes et executors Spark sur un runner GitHub (2 cœurs, 7 Go).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: StatefulSet
+      name: minio
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 25m, memory: 128Mi}
+  - target:
+      kind: Deployment
+      name: polaris
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 50m, memory: 384Mi}
