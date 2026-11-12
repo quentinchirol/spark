@@ -45,6 +45,10 @@ patches:
       - op: replace
         path: /spec/volume/size
         value: 2Gi
+      # autovacuum de pg_lake chaque minute (10 min en production) : le test vérifie qu'il compacte app.commandes
+      - op: replace
+        path: /spec/postgresql/parameters/pg_lake_iceberg.autovacuum_naptime
+        value: "60"
   - target:
       kind: StatefulSet
       name: minio

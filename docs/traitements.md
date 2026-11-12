@@ -109,3 +109,13 @@ kustomize comme les autres images).
 | Dagster | 4 runs et leur résultat dans l'historique ; planification active ; démons en bonne santé |
 
 Sur kind, l'essentiel de la durée est le démarrage des JVM (pilote puis executor) à chaque étape.
+
+Événements (`tests/integration/tester_evenements.py`, job « evenements ») :
+
+| Vérifié | Résultat |
+|---------|----------|
+| 12 000 événements, seuil abaissé à 5 000 | run lancé par le capteur **35 s** après l'envoi |
+| pilote Spark supprimé après le premier lot validé (1 800 messages) | nouvelle tentative, run réussi en 96 s |
+| contenu de `bronze.events` | exactement les 12 000 `(partition, offset)` du topic : 0 doublon, 0 manquant |
+| groupe `lakehouse-events` | retard 0 à la fin |
+| 10 événements sous le seuil (délai maximal ramené à 90 s) | dans bronze **72 s** après l'envoi |

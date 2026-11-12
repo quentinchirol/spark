@@ -218,3 +218,23 @@ def test_retard_evenements_options_du_client_kafka_valides(monkeypatch):
     monkeypatch.setattr(kafka, "KafkaConsumer", FauxConsommateur)
     assert orchestration.retard_evenements() == (100 - 40) + (100 - 10)
     assert set(vues) <= options_connues, set(vues) - options_connues
+
+
+
+# --- Maintenance (US-12) ----------------------------------------------------------------------------------------
+def test_maintenance_chaque_nuit_relancee_trois_fois_au_plus():
+    job = orchestration.defs.get_job_def("maintenance")
+    assert [n.name for n in job.graph.nodes] == ["maintenance_iceberg"]
+    assert job.graph.nodes[0].definition.retry_policy.max_retries == 2
+    planif = orchestration.defs.get_schedule_def("maintenance_chaque_nuit")
+    assert planif.cron_schedule == "15 3 * * *" and planif.execution_timezone == "Europe/Paris"
+
+
+def test_maintenance_parametres(orch):
+    module, appels, _ = orch
+    assert module.maintenance.execute_in_process().success
+    _, _, parametres = appels[0]
+    assert parametres["args"] == ["maintenance.py", "tout"]
+    env = parametres["env_vars"]
+    # les tables app.* (pg_lake) ne sont jamais touchées par la maintenance Spark
+    assert "NAMESPACES_EXCLUS=app" in env and "SNAPSHOTS_GARDES=10" in env and "ORPHELINS_APRES_H=72" in env

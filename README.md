@@ -238,6 +238,10 @@ allumé entre deux exécutions. Interface : `kubectl -n spark port-forward svc/d
 Les événements du topic Kafka `events` arrivent dans `lake.bronze.events` sans perte ni doublon, en moins de 15 min :
 un capteur Dagster lance le chargement quand le retard dépasse le seuil (ou 10 min après le précédent).
 
+Les tables Iceberg sont entretenues automatiquement : chaque nuit pour celles écrites par Spark (compaction, 10
+derniers snapshots gardés, fichiers orphelins supprimés), en continu par pg_lake pour les tables `app.*` :
+[docs/maintenance.md](docs/maintenance.md).
+
 ## Stockage et catalogue : MinIO + Polaris
 
 - **MinIO** (`http://minio:9000`) : 4 pods, 1 volume chacun, codage d'effacement. Un pod arrêté ne gêne ni la lecture ni

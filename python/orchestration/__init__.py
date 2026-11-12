@@ -1,4 +1,4 @@
-"""Orchestration Dagster des traitements Spark à la demande (US-10, US-11).
+"""Orchestration Dagster des traitements Spark à la demande (US-10, US-11, US-12).
 
 Chaque étape d'un traitement est un Job Kubernetes éphémère : son pod est le pilote Spark (image spark-lakehouse,
 k8s/traitements/lancer.sh), Spark crée puis supprime ses executors, et le Job disparaît après DUREE_VIE_JOBS_S.
@@ -193,6 +193,27 @@ def evenements_en_attente(context: SensorEvaluationContext):
     return RunRequest(run_key=f"evenements-{int(maintenant)}", tags={"raison": raison})
 
 
+# --- Maintenance des tables Iceberg (US-12), chaque nuit ---------------------------------------------------------
+# tables des namespaces exclus (app : écrites et entretenues par pg_lake) jamais touchées ; 10 snapshots gardés ;
+# fichiers orphelins supprimés après 72 h (jamais ceux d'une écriture en cours)
+NAMESPACES_EXCLUS = os.environ.get("NAMESPACES_EXCLUS", "app")
+SNAPSHOTS_GARDES = os.environ.get("SNAPSHOTS_GARDES", "10")
+ORPHELINS_APRES_H = os.environ.get("ORPHELINS_APRES_H", "72")
+
+
+@op(retry_policy=RELANCES, description="Compaction, 10 derniers snapshots gardés, fichiers orphelins supprimés")
+def maintenance_iceberg(context: OpExecutionContext) -> None:
+    lancer_spark(context, "maintenance.py", "tout",
+                 env_supplementaire=(f"NAMESPACES_EXCLUS={NAMESPACES_EXCLUS}", f"SNAPSHOTS_GARDES={SNAPSHOTS_GARDES}",
+                                     f"ORPHELINS_APRES_H={ORPHELINS_APRES_H}"))
+
+
+@job(description="Maintenance des tables Iceberg écrites par Spark (pas des tables app.* de pg_lake)",
+     tags={"traitement": "maintenance"})
+def maintenance():
+    maintenance_iceberg()
+
+
 # planifications actives dès le déploiement ; PLANIFICATIONS=arretees (tests) : à activer dans l'interface ou l'API
 ETAT_PLANIFICATIONS = (DefaultScheduleStatus.STOPPED if os.environ.get("PLANIFICATIONS") == "arretees"
                        else DefaultScheduleStatus.RUNNING)
@@ -200,4 +221,8 @@ ETAT_PLANIFICATIONS = (DefaultScheduleStatus.STOPPED if os.environ.get("PLANIFIC
 chaque_heure = ScheduleDefinition(name="ventes_chaque_heure", job=ventes, cron_schedule="5 * * * *",
                                   execution_timezone="Europe/Paris", default_status=ETAT_PLANIFICATIONS)
 
-defs = Definitions(jobs=[ventes, evenements], schedules=[chaque_heure], sensors=[evenements_en_attente])
+chaque_nuit = ScheduleDefinition(name="maintenance_chaque_nuit", job=maintenance, cron_schedule="15 3 * * *",
+                                 execution_timezone="Europe/Paris", default_status=ETAT_PLANIFICATIONS)
+
+defs = Definitions(jobs=[ventes, evenements, maintenance], schedules=[chaque_heure, chaque_nuit],
+                   sensors=[evenements_en_attente])

@@ -41,6 +41,12 @@ spec:
       max_worker_processes: "32"
       # emplacement des tables Iceberg créées par pg_lake (sous le bucket autorisé dans Polaris)
       pg_lake_iceberg.default_location_prefix: s3://warehouse/postgres
+      # maintenance des tables app.* par pg_lake lui-même (autovacuum, toutes les 10 min) : compaction des petits
+      # fichiers, expiration des snapshots de plus de 30 min, suppression des fichiers non référencés depuis
+      # 10 jours ; elle ne bloque ni les lectures ni la fusion. La maintenance Spark (US-12) n'y touche jamais.
+      # docs/maintenance.md
+      pg_lake_iceberg.autovacuum: "on"
+      pg_lake_iceberg.autovacuum_naptime: "600"
       # statement_timeout de 2 s : posé sur le rôle de l'application seulement (sql/), pas sur la fusion
   # Sauvegardes continues (WAL-G) vers un stockage objet HORS du cluster : archivage de chaque WAL + sauvegarde
   # de base chaque nuit, 7 conservées. Restauration à un instant donné : docs/sauvegardes.md.
