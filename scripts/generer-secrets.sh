@@ -19,6 +19,7 @@
 #   sauvegardes.env clé du stockage objet HORS cluster des sauvegardes PostgreSQL (WAL-G) : MinIO local
 #                   « sauvegardes » (scripts/dev) ; sur GKE, clé HMAC du bucket GCS (infra/gke/creer-sauvegardes.sh)
 #   trino.env       secret interne de Trino
+#   analytique.env  mot de passe du rôle « analyste » du pool analytique (lecture seule : Power BI, Qlik, notebooks)
 #   trino-tls.pem   clé privée + certificat HTTPS de Trino ; trino-cert.pem : certificat seul (clients)
 set -euo pipefail
 
@@ -76,6 +77,9 @@ sauvegardes_env() {
   printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nCLONE_AWS_ACCESS_KEY_ID=%s\nCLONE_AWS_SECRET_ACCESS_KEY=%s\n' \
     "$cle" "$secret" "$cle" "$secret"
 }
+analytique_env() {
+  printf 'ANALYTIQUE_MOT_DE_PASSE=%s\n' "$(hex 24)"
+}
 polaris_client_env() {
   printf 'POLARIS_CREDENTIAL=%s:%s\n' "$(hex 8)" "$(hex 24)"
 }
@@ -98,6 +102,7 @@ ecrire polaris-spark.env polaris_client_env
 ecrire polaris-trino.env polaris_client_env
 ecrire polaris-postgres.env polaris_client_env
 ecrire sauvegardes.env sauvegardes_env
+ecrire analytique.env analytique_env
 
 # clés de signature des jetons Polaris : les deux pods doivent partager la même paire
 if [ "$MODE" = "--rotation" ] || [ ! -s polaris-private.pem ] || [ ! -s polaris-public.pem ]; then

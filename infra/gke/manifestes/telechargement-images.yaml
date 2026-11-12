@@ -112,3 +112,22 @@ spec:
           containers:
             - name: pipeline
               imagePullPolicy: Always
+---
+# pool analytique : image tirée du registre, et UNIQUEMENT sur le groupe de nœuds analytique
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lake-analytique
+  namespace: spark
+spec:
+  template:
+    spec:
+      nodeSelector:
+        role: analytique
+      containers:
+        - name: postgres
+          imagePullPolicy: Always
+        - name: pgduck
+          imagePullPolicy: Always
+        - name: synchro
+          imagePullPolicy: Always
