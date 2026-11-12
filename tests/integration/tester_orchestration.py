@@ -23,35 +23,12 @@ from decimal import Decimal
 import httpx
 from pyarrow import fs
 
+import dagster_api as api
 from commun import PORT_POLARIS, PORT_S3, catalogue, env, kubectl, tunnel, verifier, verifier_hote_minio
+from dagster_api import attendre_run, essais, graphql, journal_echec
 
 PORT_DAGSTER = 13000
-SELECTEUR = {"repositoryLocationName": "lakehouse", "repositoryName": "__repository__", "jobName": "ventes"}
 ETAPES = ("ventes_bronze", "ventes_silver", "ventes_gold")
-EN_COURS = {"QUEUED", "NOT_STARTED", "STARTING", "STARTED", "MANAGED", "CANCELING"}
-
-LANCER = """
-mutation($p: ExecutionParams!) {
-  launchRun(executionParams: $p) {
-    __typename
-    ... on LaunchRunSuccess { run { runId } }
-    ... on PythonError { message }
-    ... on RunConfigValidationInvalid { errors { message } }
-    ... on InvalidSubsetError { message }
-    ... on PipelineNotFoundError { message }
-    ... on RunConflict { message }
-  }
-}"""
-ETAT = """
-query($id: ID!) {
-  runOrError(runId: $id) { __typename ... on Run { status startTime endTime } ... on RunNotFoundError { message } }
-}"""
-HISTORIQUE = """
-query {
-  runsOrError(filter: {pipelineName: "ventes"}, limit: 20) {
-    __typename ... on Runs { results { runId status } } ... on PythonError { message }
-  }
-}"""
 PLANIFICATION = """
 query($s: ScheduleSelector!) {
   scheduleOrError(scheduleSelector: $s) {
@@ -68,17 +45,6 @@ mutation($s: ScheduleSelector!) {
     ... on UnauthorizedError { message } ... on ScheduleNotFoundError { message }
   }
 }"""
-DEMONS = """
-query { instance { daemonHealth { allDaemonStatuses { daemonType healthy required } } } }"""
-EVENEMENTS = """
-query($id: ID!, $curseur: String) {
-  logsForRun(runId: $id, afterCursor: $curseur, limit: 1000) {
-    __typename
-    ... on EventConnection { cursor hasMore events { __typename ... on MessageEvent { eventType stepKey message } } }
-    ... on PythonError { message }
-  }
-}"""
-
 FICHIER_1 = """id,date,client,produit,quantite,prix_unitaire
 v1,2026-11-01,alice,livre,2,10.00
 v2,2026-11-01,bob,jeu,1,50.00
@@ -97,83 +63,8 @@ v8,2026-11-03,erin,jeu,2,50.00
 """
 
 
-def graphql(client, requete, **variables):
-    reponse = client.post("/graphql", json={"query": requete, "variables": variables}, timeout=60)
-    reponse.raise_for_status()
-    corps = reponse.json()
-    if corps.get("errors"):
-        raise RuntimeError(f"GraphQL : {corps['errors']}")
-    return corps["data"]
-
-
-CODE = """
-query($r: RepositorySelector!) {
-  repositoryOrError(repositorySelector: $r) {
-    __typename ... on Repository { jobs { name } } ... on RepositoryNotFoundError { message } ... on PythonError { message }
-  }
-}"""
-
-
-def attendre_code(client, delai=180):
-    """Attend que l'interface voie le job « ventes » (serveur de code chargé) ; recharge l'espace de travail."""
-    selecteur = {"repositoryLocationName": SELECTEUR["repositoryLocationName"],
-                 "repositoryName": SELECTEUR["repositoryName"]}
-    debut, resultat = time.time(), None
-    while time.time() - debut < delai:
-        graphql(client, "mutation { reloadWorkspace { __typename } }")
-        resultat = graphql(client, CODE, r=selecteur)["repositoryOrError"]
-        if resultat["__typename"] == "Repository" and any(j["name"] == "ventes" for j in resultat["jobs"]):
-            return
-        time.sleep(5)
-    raise RuntimeError(f"code Dagster non chargé après {delai} s : {resultat}")
-
-
 def lancer_run(client, echec=""):
-    config = {"ops": {etape: {"config": {"echec": echec}} for etape in ETAPES}}
-    resultat = graphql(client, LANCER, p={"selector": SELECTEUR, "runConfigData": config})["launchRun"]
-    if resultat["__typename"] != "LaunchRunSuccess":
-        raise RuntimeError(f"lancement refusé : {resultat}")
-    return resultat["run"]["runId"]
-
-
-def attendre_run(client, run_id, delai=1500):
-    debut = time.time()
-    while time.time() - debut < delai:
-        run = graphql(client, ETAT, id=run_id)["runOrError"]
-        if run["__typename"] != "Run":
-            raise RuntimeError(f"run introuvable : {run}")
-        if run["status"] not in EN_COURS:
-            print(f"     run {run_id[:8]} : {run['status']} en {time.time() - debut:.0f} s", flush=True)
-            return run["status"]
-        time.sleep(5)
-    raise RuntimeError(f"run {run_id} toujours en cours après {delai} s")
-
-
-def evenements(client, run_id):
-    tous, curseur = [], None
-    while True:
-        page = graphql(client, EVENEMENTS, id=run_id, curseur=curseur)["logsForRun"]
-        if page["__typename"] != "EventConnection":
-            raise RuntimeError(f"journal du run illisible : {page}")
-        tous += [e for e in page["events"] if e.get("eventType")]
-        curseur = page["cursor"]
-        if not page["hasMore"]:
-            return tous
-
-
-def essais(client, run_id):
-    """Nombre de tentatives de chaque étape : 1 démarrage (STEP_START) + les relances (STEP_RESTARTED)."""
-    compte = {}
-    for e in evenements(client, run_id):
-        if e["eventType"] in ("STEP_START", "STEP_RESTARTED"):
-            compte[e["stepKey"]] = compte.get(e["stepKey"], 0) + 1
-    return compte
-
-
-def journal_echec(client, run_id):
-    for e in evenements(client, run_id):
-        if e["eventType"] in ("STEP_FAILURE", "RUN_FAILURE", "ENGINE_EVENT") and e.get("message"):
-            print(f"     {e['eventType']} {e.get('stepKey') or ''} : {e['message'][:600]}")
+    return api.lancer_run(client, "ventes", {"ops": {etape: {"config": {"echec": echec}} for etape in ETAPES}})
 
 
 def deposer(s3, nom, contenu):
@@ -203,7 +94,7 @@ def main():
                         (trino["TRINO_S3_ACCESS_KEY"], trino["TRINO_S3_SECRET_KEY"]))
         client = httpx.Client(base_url=f"http://localhost:{PORT_DAGSTER}")
 
-        attendre_code(client)
+        api.attendre_code(client, "ventes")
         print("1. Fichiers → bronze → silver → gold, chaque étape dans un Job Kubernetes éphémère")
         deposer(s3, "2026-11-02.csv", FICHIER_1)
         run1 = lancer_run(client)
@@ -265,21 +156,19 @@ def main():
         verifier(reste == (0, 0, 0), f"plus rien ne tourne (pods, executors, Jobs : {reste})")
 
         print("5. Dagster : historique et résultat des runs, planification active, démons en bonne santé")
-        historique = graphql(client, HISTORIQUE)["runsOrError"]["results"]
+        historique = api.runs(client, "ventes")
         statuts = {r["runId"]: r["status"] for r in historique}
         attendu_runs = {run1: "SUCCESS", run2: "SUCCESS", run3: "FAILURE", run4: "SUCCESS"}
         verifier(all(statuts.get(i) == s for i, s in attendu_runs.items()),
                  f"les 4 runs et leur résultat dans l'historique ({len(historique)} run(s))")
-        selecteur = {"repositoryLocationName": SELECTEUR["repositoryLocationName"],
-                     "repositoryName": SELECTEUR["repositoryName"], "scheduleName": "ventes_chaque_heure"}
+        selecteur = {**api.LOCALISATION, "scheduleName": "ventes_chaque_heure"}
         activation = graphql(client, ACTIVER, s=selecteur)["startSchedule"]
         verifier(activation["__typename"] == "ScheduleStateResult", f"planification activée ({activation})")
         planif = graphql(client, PLANIFICATION, s=selecteur)["scheduleOrError"]
         verifier(planif["__typename"] == "Schedule" and planif["scheduleState"]["status"] == "RUNNING"
                  and planif["cronSchedule"] == "5 * * * *" and planif["futureTicks"]["results"],
                  f"planification ventes_chaque_heure active, prochain lancement prévu ({planif.get('cronSchedule')})")
-        demons = {d["daemonType"]: d["healthy"] for d in
-                  graphql(client, DEMONS)["instance"]["daemonHealth"]["allDaemonStatuses"] if d["required"]}
+        demons = api.demons(client)
         verifier(demons.get("SCHEDULER") and demons.get("QUEUED_RUN_COORDINATOR") and all(demons.values()),
                  f"démons Dagster en bonne santé {demons}")
     finally:

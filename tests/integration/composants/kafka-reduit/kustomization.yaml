@@ -1,0 +1,42 @@
+# Kafka réduit pour un runner GitHub : 1 nœud, réplication 1, demandes de ressources minimales.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: KafkaNodePool
+      name: noeuds
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/resources/requests
+        value: {cpu: 100m, memory: 768Mi}
+      - op: replace
+        path: /spec/storage/volumes/0/size
+        value: 2Gi
+  - target:
+      kind: Kafka
+      name: lakehouse
+    patch: |-
+      - op: replace
+        path: /spec/kafka/config
+        value:
+          default.replication.factor: 1
+          min.insync.replicas: 1
+          offsets.topic.replication.factor: 1
+          transaction.state.log.replication.factor: 1
+          transaction.state.log.min.isr: 1
+          auto.create.topics.enable: false
+      - op: add
+        path: /spec/entityOperator/topicOperator/resources
+        value: {requests: {cpu: 10m, memory: 256Mi}}
+  - target:
+      kind: KafkaTopic
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/config/min.insync.replicas
+        value: 1

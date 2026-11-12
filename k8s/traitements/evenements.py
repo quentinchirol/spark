@@ -30,7 +30,9 @@ MAX_PAR_PARTITION = int(os.environ.get("MAX_PAR_PARTITION", "500000"))
 
 def positions_dans_bronze(spark):
     """Prochain offset à lire par partition, d'après les messages déjà écrits dans bronze."""
-    lignes = spark.sql(f"SELECT partition, max(offset) + 1 FROM {TABLE} WHERE topic = '{TOPIC}' GROUP BY partition")
+    # partition et offset sont aussi des mots-clés SQL : entre accents graves
+    lignes = spark.sql(f"SELECT `partition`, max(`offset`) + 1 FROM {TABLE} WHERE topic = '{TOPIC}' "
+                       "GROUP BY `partition`")
     return {r[0]: r[1] for r in lignes.collect()}
 
 
@@ -53,7 +55,7 @@ def ecrire_lot(spark, debut, fin):
 def bronze(spark):
     spark.sql("CREATE NAMESPACE IF NOT EXISTS lake.bronze")
     spark.sql(f"""CREATE TABLE IF NOT EXISTS {TABLE} (
-        cle string, valeur string, topic string, partition int, offset bigint, horodatage timestamp,
+        cle string, valeur string, topic string, `partition` int, `offset` bigint, horodatage timestamp,
         _charge_le timestamp) USING iceberg PARTITIONED BY (days(horodatage))""")
     consommateur = KafkaConsumer(bootstrap_servers=BOOTSTRAP, group_id=GROUPE, enable_auto_commit=False,
                                  request_timeout_ms=30000)

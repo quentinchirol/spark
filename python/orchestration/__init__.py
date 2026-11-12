@@ -24,6 +24,11 @@ DUREE_VIE_JOBS_S = int(os.environ.get("DUREE_VIE_JOBS_S", "300"))
 # CPU réservé par le pilote et par chaque executor (réduit en CI : tests/integration/orchestration)
 CPU_PILOTE = os.environ.get("CPU_PILOTE", "250m")
 CPU_EXECUTEUR = os.environ.get("CPU_EXECUTEUR", "500m")
+# mémoire : pod pilote (réservée), tas Java du pilote, tas et marge hors tas de chaque executor (réduits en CI)
+MEMOIRE_PILOTE = os.environ.get("MEMOIRE_PILOTE", "1536Mi")
+MEMOIRE_SPARK_PILOTE = os.environ.get("MEMOIRE_SPARK_PILOTE", "1g")
+MEMOIRE_EXECUTEUR = os.environ.get("MEMOIRE_EXECUTEUR", "1g")
+MARGE_EXECUTEUR = os.environ.get("MARGE_EXECUTEUR", "512m")
 KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "lakehouse-kafka-bootstrap:9092")
 
 # 3 essais au plus par étape (attente de 20 s puis 40 s) ; chaque étape est un commit Iceberg atomique, donc
@@ -39,7 +44,9 @@ class EtapeConfig(Config):
 def parametres_job(script: str, etape: str, echec: str = "", env_supplementaire: tuple = ()) -> dict:
     """Paramètres du Job Kubernetes d'une étape Spark (séparés pour être testés sans cluster)."""
     env = [f"SPARK_EXECUTOR_IMAGE={IMAGE_SPARK}", f"SPARK_EXECUTOR_PULL_POLICY={POLITIQUE_TIRAGE}",
-           f"SPARK_EXECUTOR_REQUEST_CORES={CPU_EXECUTEUR}", "S3_ENDPOINT=minio:9000", *env_supplementaire]
+           f"SPARK_EXECUTOR_REQUEST_CORES={CPU_EXECUTEUR}", f"SPARK_DRIVER_MEMORY={MEMOIRE_SPARK_PILOTE}",
+           f"SPARK_EXECUTOR_MEMORY={MEMOIRE_EXECUTEUR}", f"SPARK_EXECUTOR_MEMORY_OVERHEAD={MARGE_EXECUTEUR}",
+           "S3_ENDPOINT=minio:9000", *env_supplementaire]
     if echec:
         env.append(f"ECHEC={echec}")
     return {
@@ -54,7 +61,7 @@ def parametres_job(script: str, etape: str, echec: str = "", env_supplementaire:
         "volumes": [{"name": "traitements", "config_map": {"name": "traitements"}}],
         "volume_mounts": [{"name": "traitements", "mount_path": "/traitements"}],
         "labels": {"app": "traitement", "traitement": script.removesuffix(".py"), "etape": etape},
-        "resources": {"requests": {"cpu": CPU_PILOTE, "memory": "1536Mi"}, "limits": {"memory": "2Gi"}},
+        "resources": {"requests": {"cpu": CPU_PILOTE, "memory": MEMOIRE_PILOTE}, "limits": {"memory": "2Gi"}},
         # une tentative = un Job ; la relance est faite par Dagster. Le Job disparaît après DUREE_VIE_JOBS_S.
         "job_spec_config": {"ttl_seconds_after_finished": DUREE_VIE_JOBS_S, "backoff_limit": 0},
         "timeout": 3600,

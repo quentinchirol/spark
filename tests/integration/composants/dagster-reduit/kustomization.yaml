@@ -1,0 +1,58 @@
+# Dagster réduit pour un runner GitHub : 1 instance PostgreSQL, CPU et mémoire réservés minimaux (Dagster, pilotes
+# et executors Spark), Jobs supprimés 20 s après leur fin, planifications arrêtées (un run planifié à h+5 se mêlerait aux runs
+# vérifiés ; tests/integration/tester_orchestration.py l'active à la fin).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: postgresql
+      name: lake-outils
+    patch: |-
+      - op: replace
+        path: /spec/numberOfInstances
+        value: 1
+      - op: replace
+        path: /spec/resources/requests
+        value: {cpu: 50m, memory: 256Mi}
+      - op: replace
+        path: /spec/volume/size
+        value: 1Gi
+  - target:
+      kind: Deployment
+      name: dagster-code
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: CPU_PILOTE, value: 100m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: CPU_EXECUTEUR, value: 100m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: DUREE_VIE_JOBS_S, value: "20"}
+      # pilote : 1 Gi réservé, 512 Mo de tas ; executor : 512 Mo de tas + 384 Mo hors tas (pod de 896 Mi)
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MEMOIRE_PILOTE, value: 1Gi}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MEMOIRE_SPARK_PILOTE, value: 512m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MEMOIRE_EXECUTEUR, value: 512m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: MARGE_EXECUTEUR, value: 384m}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: PLANIFICATIONS, value: arretees}
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 50m, memory: 384Mi}
+  - target:
+      kind: Deployment
+      name: dagster-(webserver|daemon)
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value: {cpu: 25m, memory: 192Mi}
