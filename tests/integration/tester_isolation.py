@@ -102,6 +102,12 @@ def main():
     tunnels = [tunnel("svc/lake-analytique", PORT_POOL, 5432), tunnel(primaire, PORT_PRINCIPAL, 5432)]
     try:
         app = LatenceApplication(mot_de_passe_app())
+        # une première lecture ici : une erreur (droits, connexion) s'affiche clairement au lieu d'arrêter le fil
+        try:
+            app.conn.execute("SELECT count(*) FROM vue.commandes").fetchall()
+        except psycopg.Error as erreur:
+            verifier(False, f"l'application (rôle lake_app) lit vue.commandes ({str(erreur).splitlines()[0]})")
+        verifier(True, "l'application (rôle lake_app) lit vue.commandes")
         app.start()
         avant = app.mesurer(10)
         print(f"     application seule : {len(avant)} lectures, médiane {statistics.median(avant) * 1000:.1f} ms, "

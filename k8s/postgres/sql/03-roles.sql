@@ -1,4 +1,5 @@
--- Rôle de l'application (FastAPI) : lit les vues, jamais les tables chaudes ou froides directement.
+-- Rôle de l'application (FastAPI) : lit les vues (et, en lecture seule, les tables Iceberg app.* : voir plus bas),
+-- jamais les tables chaudes.
 -- Une requête de l'application ne doit jamais occuper le serveur : 2 s maximum (la fusion n'est pas concernée).
 ALTER ROLE lake_app SET statement_timeout = '2s';
 -- mémoire par opération (tri, hachage) bornée pour chaque rôle : une requête ne peut pas épuiser la mémoire du serveur
@@ -6,6 +7,12 @@ ALTER ROLE lake_app SET work_mem = '16MB';
 GRANT USAGE ON SCHEMA vue TO lake_app;
 GRANT SELECT ON ALL TABLES IN SCHEMA vue TO lake_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA vue GRANT SELECT ON TABLES TO lake_app;
+-- pg_lake résout les tables Iceberg (app.*) avec les droits de l'utilisateur qui lit la vue, et non ceux du
+-- propriétaire de la vue : sans ces droits, lake_app ne pouvait pas lire vue.<t> (« permission denied for schema
+-- app », constaté en CI). Lecture seule, sur les mêmes données que les vues.
+GRANT USAGE ON SCHEMA app TO lake_app;
+GRANT SELECT ON ALL TABLES IN SCHEMA app TO lake_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT SELECT ON TABLES TO lake_app;
 
 -- Les fonctions sont exécutables par tous (PUBLIC) par défaut : seuls les rôles prévus y ont droit.
 REVOKE ALL ON FUNCTION lake.ecrire_lot(text, jsonb), lake.ecrire_critique(text, jsonb) FROM PUBLIC;
