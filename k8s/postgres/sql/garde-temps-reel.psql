@@ -1,0 +1,48 @@
+-- Garde de l'accès temps réel (US-16), incluse par 05-temps-reel.sql dans chaque base où l'on peut se connecter
+-- (lake, postgres). Idempotent. docs/temps-reel.md
+--
+-- Rôle de groupe temps_reel (sans connexion) : ses membres sont les utilisateurs temps réel, créés par
+-- scripts/temps-reel.py pour une durée limitée. Déclencheur de connexion (PostgreSQL 17+) : un membre qui se
+-- connecte au PRIMAIRE est refusé avant de pouvoir lancer une requête ; sur une réplique, rien n'est contrôlé
+-- (pg_is_in_recovery). Les superutilisateurs (Patroni, opérateur, administration) ne sont jamais concernés.
+-- Le déclencheur de connexion s'exécute aussi sur les répliques : la fonction n'y écrit rien.
+-- En cas de problème sur cette fonction, un superutilisateur se connecte toujours avec
+-- PGOPTIONS='-c event_triggers=off' (paramètre réservé aux superutilisateurs).
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'temps_reel') THEN
+        CREATE ROLE temps_reel NOLOGIN;
+    END IF;
+END $$;
+
+-- schéma réservé : aucun droit pour PUBLIC (un déclencheur appelle sa fonction sans contrôle de droits)
+CREATE SCHEMA IF NOT EXISTS garde;
+REVOKE ALL ON SCHEMA garde FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION garde.temps_reel_hors_primaire() RETURNS event_trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    -- par oid : aucune erreur si le rôle de groupe n'existe pas (une erreur ici bloquerait TOUTES les connexions)
+    groupe oid := (SELECT oid FROM pg_roles WHERE rolname = 'temps_reel');
+BEGIN
+    IF groupe IS NULL OR pg_is_in_recovery() THEN
+        RETURN;
+    END IF;
+    IF (SELECT rolsuper FROM pg_roles WHERE rolname = session_user) THEN
+        RETURN;                     -- un superutilisateur est « membre » de tous les rôles : jamais refusé ici
+    END IF;
+    IF pg_has_role(session_user, groupe, 'MEMBER') THEN
+        RAISE EXCEPTION 'accès temps réel : connexion refusée sur le primaire du PostgreSQL principal'
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'se connecter à une réplique (Service lake-principal-repl) : docs/temps-reel.md';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_event_trigger WHERE evtname = 'temps_reel_hors_primaire') THEN
+        CREATE EVENT TRIGGER temps_reel_hors_primaire ON login
+            EXECUTE FUNCTION garde.temps_reel_hors_primaire();
+    END IF;
+END $$;

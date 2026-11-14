@@ -1,6 +1,6 @@
 # Intégration continue : à chaque push et à chaque pull request vers develop ou main.
 #   - python      : lint (ruff), compilation, tests unitaires (sans cluster)
-#   - sql         : modèle chaud + froid du PostgreSQL principal (tests/sql, PostgreSQL éphémère)
+#   - sql         : modèle chaud + froid du PostgreSQL principal, garde de l'accès temps réel (tests/sql, PostgreSQL éphémère)
 #   - manifestes  : kustomize build + validation des schémas Kubernetes (kubeconform)
 #   - images      : construction des images Docker (publication : workflow « Images »)
 # Les tests d'intégration (cluster kind) tournent dans le workflow « Integration ».
@@ -68,6 +68,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Tests du modèle (tables ordinaires à la place d'Iceberg)
         run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/modele.sql
+      - name: Garde de l'accès temps réel (refus sur le primaire)
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/temps-reel.sql
 
   secrets:
     name: Aucun secret versionné
