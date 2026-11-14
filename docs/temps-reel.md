@@ -87,7 +87,14 @@ s'applique jamais aux superutilisateurs (Patroni, opérateur, Job `lake-schema`)
 
 ## Mesuré en CI (kind)
 
-`tests/integration/tester_temps_reel.py` (job « PostgreSQL principal ») : la session est sur une réplique ; une
-écriture de l'application y est lue en quelques millisecondes ; le même utilisateur est refusé sur le primaire dans
-les trois bases ; un utilisateur sans accès est refusé sur `vue.*`, `app.*` et `chaud.*` ; un accès expiré est refusé ;
-une session de membre présente sur le primaire est coupée ; `retirer` coupe la session ouverte et supprime le Secret.
+`tests/integration/tester_temps_reel.py` (job « PostgreSQL principal ») :
+
+| Contrôle | Résultat |
+|----------|----------|
+| session d'un utilisateur temps réel | sur une réplique (`pg_is_in_recovery()`), `vue.commandes` lue (chaud + Iceberg) |
+| écriture de l'application → lisible sur la réplique | **12 ms** (médiane), 13 ms au plus, sur 10 écritures |
+| même utilisateur sur le primaire (`lake`, `postgres`, `template1`) | refusé à la connexion |
+| utilisateur sans accès | `permission denied` sur `vue.*`, `app.*`, `chaud.*` |
+| accès expiré | connexion refusée |
+| session de membre restée sur le primaire (bascule simulée) | coupée après 24 s |
+| `retirer` | session ouverte coupée, connexion refusée, Secret supprimé |

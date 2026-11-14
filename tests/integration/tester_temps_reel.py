@@ -15,6 +15,7 @@ Dépendances : pip install "psycopg[binary]"
 import base64
 import importlib.util
 import json
+import re
 import secrets
 import statistics
 import subprocess
@@ -67,7 +68,10 @@ def refus(port, utilisateur, mot_de_passe, base="lake"):
         connexion(port, utilisateur, mot_de_passe, base).close()
         return None
     except psycopg.OperationalError as erreur:
-        return " ".join(str(erreur).split())
+        # premier motif renvoyé par le serveur (psycopg le répète pour chaque adresse essayée)
+        texte = " ".join(str(erreur).split())
+        motif = re.search(r"FATAL: (.*?)(?: HINT:| CONTEXT:| Multiple|$)", texte)
+        return motif.group(1) if motif else texte
 
 
 def erreur(conn, requete):
