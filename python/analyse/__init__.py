@@ -60,11 +60,13 @@ def _avec_connexion(fonction):
 @_avec_connexion
 def tables(conn=None) -> pd.DataFrame:
     """Tables et vues lisibles par l'utilisateur connecté (schéma, table, type)."""
-    requete = """SELECT table_schema AS schema, table_name AS "table",
-                        CASE table_type WHEN 'VIEW' THEN 'vue' ELSE 'table' END AS type
-                 FROM information_schema.tables
-                 WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-                   AND has_table_privilege(format('%I.%I', table_schema, table_name), 'SELECT')
+    # par oid (et non par nom) : aucune erreur sur les schémas internes que l'utilisateur ne peut pas ouvrir
+    requete = """SELECT n.nspname AS schema, c.relname AS "table",
+                        CASE WHEN c.relkind IN ('v', 'm') THEN 'vue' ELSE 'table' END AS type
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                   AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'
+                   AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')
                  ORDER BY 1, 2"""
     return lire(requete, conn=conn)
 
