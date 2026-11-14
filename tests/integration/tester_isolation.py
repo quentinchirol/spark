@@ -28,6 +28,7 @@ from commun import env, kubectl, tunnel, verifier
 
 PORT_POOL, PORT_PRINCIPAL = 15432, 15433
 PLACES = 8
+DUREE_DASHBOARD = 2      # secondes par requête de dashboard simulée
 
 
 def mot_de_passe_app():
@@ -121,17 +122,21 @@ def main():
         print("1. 40 requêtes de dashboard en même temps : file d'attente, toutes aboutissent, application rapide")
         resultats = {}
         debut = time.monotonic()
-        fils = lancer({i: "SELECT pg_sleep(4), (SELECT count(*) FROM app.commandes_historique)" for i in range(40)},
-                      resultats)
+        # 2 s par requête : 40 requêtes sur 7 places (la 8e tient la requête longue) → ~12 s d'attente au plus, sous
+        # l'attente maximale de la CI (20 s) ; avec 4 s, les dernières attendaient plus de 20 s et étaient refusées
+        fils = lancer({i: f"SELECT pg_sleep({DUREE_DASHBOARD}), (SELECT count(*) FROM app.commandes_historique)"
+                       for i in range(40)}, resultats)
         maximum, pendant = 0, []
         while any(f.is_alive() for f in fils):
             maximum = max(maximum, actives_sur_le_pod())
             pendant += app.mesurer(1)
         duree = time.monotonic() - debut
         reussies = sum(1 for etat, _ in resultats.values() if etat == "ok")
-        verifier(reussies == 40, f"40 requêtes abouties ({reussies}) en {duree:.0f} s")
+        erreurs = sorted({etat for etat, _ in resultats.values() if etat != "ok"})
+        verifier(reussies == 40, f"40 requêtes abouties ({reussies}) en {duree:.0f} s {erreurs or ''}")
         verifier(maximum <= PLACES, f"au plus {PLACES} en cours à la fois dans PostgreSQL (maximum observé : {maximum})")
-        verifier(duree >= 4 * 40 / PLACES * 0.8, f"les autres ont attendu leur tour ({duree:.0f} s pour 40 × 4 s)")
+        verifier(duree >= DUREE_DASHBOARD * 40 / PLACES * 0.8,
+                 f"les autres ont attendu leur tour ({duree:.0f} s pour 40 × {DUREE_DASHBOARD} s)")
         print(f"     application pendant la charge : {len(pendant)} lectures, médiane "
               f"{statistics.median(pendant) * 1000:.1f} ms, p95 {p95(pendant) * 1000:.1f} ms", flush=True)
         verifier(p95(pendant) < 0.25, f"application toujours rapide pendant la charge analytique "
