@@ -7,7 +7,7 @@
 --   jamais sur le primaire, trois protections :
 --     1. on se connecte par le Service des répliques (lake-principal-repl) ;
 --     2. une connexion d'un membre au primaire est refusée (garde-temps-reel.psql, dans chaque base) ;
---     3. pg_cron, qui ne tourne que sur le primaire, coupe toutes les 30 s les sessions de membres qui s'y
+--     3. pg_cron, qui ne tourne que sur le primaire, coupe chaque minute les sessions de membres qui s'y
 --        trouveraient : session ouverte sur une réplique promue primaire par une bascule (Patroni).
 
 \connect lake
@@ -27,8 +27,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT SELECT ON TABLES TO temps_reel;
 \ir garde-temps-reel.psql
 
 -- 3. sessions de membres sur le primaire coupées (pg_cron ne lance rien sur une réplique). Par oid : aucune erreur
--- si le rôle de groupe n'existe pas. Une tâche du même nom est remplacée : idempotent.
-SELECT cron.schedule_in_database('temps-reel-hors-primaire', '30 seconds', $tache$
+-- si le rôle de groupe n'existe pas. Une tâche du même nom est remplacée : idempotent. Chaque minute, comme la
+-- fusion (syntaxe cron classique) : une planification en secondes lancerait deux fois plus de processus de fond.
+SELECT cron.schedule_in_database('temps-reel-hors-primaire', '* * * * *', $tache$
     SELECT count(pg_terminate_backend(a.pid))
     FROM pg_stat_activity a JOIN pg_roles r ON r.oid = a.usesysid
     WHERE NOT r.rolsuper

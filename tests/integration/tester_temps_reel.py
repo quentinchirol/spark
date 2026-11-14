@@ -6,7 +6,7 @@
   3. un utilisateur sans cet accès est refusé (aucun droit sur les vues ni les tables) ;
   4. un accès expiré est refusé ;
   5. une session de membre présente sur le primaire (cas d'une réplique promue par une bascule) est coupée en
-     moins de 30 s ;
+     moins d'une minute ;
   6. accès retiré : sessions coupées, connexion refusée, Secret supprimé.
 
     python tests/integration/tester_temps_reel.py
@@ -143,12 +143,12 @@ def main():
         bascule = connexion(PORT_PRIMAIRE, "essai_bascule", autre)    # pas encore membre : acceptée
         sql_superutilisateur("GRANT temps_reel TO essai_bascule;")
         debut, coupee = time.monotonic(), None
-        while time.monotonic() - debut < 60:
+        while time.monotonic() - debut < 90:
             if erreur(bascule, "SELECT 1") is not None:
                 coupee = time.monotonic() - debut
                 break
             time.sleep(1)
-        verifier(coupee is not None and coupee <= 40, f"session coupée sur le primaire après {coupee or 0:.0f} s")
+        verifier(coupee is not None and coupee <= 75, f"session coupée sur le primaire après {coupee or 0:.0f} s")
         sql_superutilisateur("DROP ROLE essai_bascule; DROP ROLE essai_sans_acces;")
 
         print("6. Accès retiré : sessions coupées, connexion refusée")

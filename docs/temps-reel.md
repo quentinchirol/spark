@@ -52,7 +52,7 @@ SELECT pg_is_in_recovery();                                              -- true
 
 | Garantie | Comment |
 |----------|---------|
-| **jamais le primaire** | 1. connexion par le Service des répliques ; 2. une connexion d'un membre de `temps_reel` au primaire est **refusée** avant toute requête (déclencheur de connexion PostgreSQL 18, bases `lake`, `postgres`, `template1` et toute base créée ensuite) ; 3. si une réplique est promue primaire pendant une session (bascule Patroni), `pg_cron` coupe la session en moins de 30 s |
+| **jamais le primaire** | 1. connexion par le Service des répliques ; 2. une connexion d'un membre de `temps_reel` au primaire est **refusée** avant toute requête (déclencheur de connexion PostgreSQL 18, bases `lake`, `postgres`, `template1` et toute base créée ensuite) ; 3. si une réplique est promue primaire pendant une session (bascule Patroni), `pg_cron` coupe la session en moins d'une minute |
 | à la seconde | réplication synchrone : une écriture confirmée à l'application est déjà sur une réplique ; lisible sur la réplique en quelques millisecondes |
 | refusé sans cet accès | aucun droit sur `vue.*` ni `app.*` pour les autres utilisateurs ; accès expiré ou retiré : connexion refusée |
 | exceptionnel | accès nominatif, 7 jours au plus, listé (`liste`) |
@@ -96,5 +96,5 @@ s'applique jamais aux superutilisateurs (Patroni, opérateur, Job `lake-schema`)
 | même utilisateur sur le primaire (`lake`, `postgres`, `template1`) | refusé à la connexion |
 | utilisateur sans accès | `permission denied` sur `vue.*`, `app.*`, `chaud.*` |
 | accès expiré | connexion refusée |
-| session de membre restée sur le primaire (bascule simulée) | coupée après 24 s |
+| session de membre restée sur le primaire (bascule simulée) | coupée en moins d'une minute (24 s mesurées, coupure alors toutes les 30 s) |
 | `retirer` | session ouverte coupée, connexion refusée, Secret supprimé |

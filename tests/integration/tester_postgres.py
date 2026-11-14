@@ -47,6 +47,11 @@ def historique_cron(pod):
                    "ORDER BY start_time DESC LIMIT 5", base="postgres"))
     print(sql(pod, "SELECT current_setting('max_worker_processes'), string_agg(backend_type || ':' || n, ', ') "
                    "FROM (SELECT backend_type, count(*) n FROM pg_stat_activity GROUP BY 1) t", base="postgres"))
+    # journal de PostgreSQL (fichiers CSV de Spilo, pas la sortie du conteneur) : lancement des tâches pg_cron
+    journal = subprocess.run(["kubectl", "-n", "spark", "exec", pod, "-c", "postgres", "--", "sh", "-c",
+                              "cat /home/postgres/pgdata/pgroot/pg_log/*.csv | grep -i -E 'cron|worker' | tail -n 40"],
+                             text=True, capture_output=True, check=False)
+    print(journal.stdout or journal.stderr)
 
 
 def lot(*messages):
