@@ -49,6 +49,9 @@ Le rôle `lake_app` ne lit que les vues `vue.*`, avec un `statement_timeout` de 
 SELECT * FROM vue.commandes WHERE id = '…';
 ```
 
+Lecture à la seconde par un responsable métier (exceptionnel) : sur une **réplique** uniquement, jamais le primaire,
+avec un accès temporaire : [temps-reel.md](temps-reel.md).
+
 ## Fusion vers Iceberg
 
 `pg_cron` lance `CALL lake.fusionner_tout()` chaque minute : les lignes chaudes reçues avant le début de la fusion

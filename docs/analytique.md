@@ -124,6 +124,7 @@ kubectl -n spark exec deploy/lake-analytique -c postgres -- /usr/lib/postgresql/
 | `lake_app` (lecture de l'application) | principal | 2 s | 16 Mo |
 | `lake_critique` (actions critiques) | principal | 5 s | 8 Mo |
 | `lake_writer` (writers Kafka) | principal | 60 s | 32 Mo |
+| `temps_reel_<nom>` (accès temps réel, [temps-reel.md](temps-reel.md)) | répliques du principal | 30 s | 16 Mo |
 
 DuckDB (`pgduck_server`) : mémoire bornée (`--memory_limit`, 1 Go) et cache disque local (`--cache_dir`) sur le principal
 et dans chaque pod du pool : jamais les 80 % de la mémoire du nœud qu'il prendrait par défaut.
