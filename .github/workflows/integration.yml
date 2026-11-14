@@ -2,6 +2,7 @@
 #   - stockage : MinIO (4 pods) + Polaris (2 pods) : table lisible, 1 pod MinIO arrêté, droits du principal trino ;
 #   - postgres : PostgreSQL principal (Zalando + pg_lake) : réplication synchrone, vue chaud + froid,
 #                pool analytique en lecture seule (tables du catalogue, données de l'application en < 2 min),
+#                isolation (file d'attente PgBouncer, coupure à 2 min, autoscaling, latence de l'application),
 #                fusion planifiée vers Iceberg, lecture des mêmes lignes par un autre moteur via Polaris ;
 #                sauvegardes WAL-G hors cluster et restauration à un instant donné dans un cluster neuf ;
 #   - ecriture : passerelle → Kafka → writers (KEDA) → PostgreSQL : ni perte ni doublon malgré un writer tué,
@@ -100,6 +101,11 @@ jobs:
           config: scripts/dev/kind.yaml
       - name: Charger l'image dans kind
         run: kind load docker-image postgres-lake:18 --name lakehouse
+      - name: metrics-server (mesure du CPU des pods, pour l'autoscaling du pool analytique)
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
+          kubectl -n kube-system patch deploy metrics-server --type=json \
+            -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
       - name: Secrets de test
         run: scripts/generer-secrets.sh --si-absents
       - name: Stockage des sauvegardes, hors de Kubernetes (conteneur Docker sur le réseau de kind)
@@ -118,6 +124,7 @@ jobs:
           kubectl -n spark wait --for=jsonpath='{.status.PostgresClusterStatus}'=Running postgresql/lake-principal --timeout=600s
           kubectl -n spark wait --for=condition=complete job/lake-schema --timeout=300s
           kubectl -n spark rollout status deploy/lake-analytique --timeout=300s
+          kubectl -n kube-system rollout status deploy/metrics-server --timeout=180s
           kubectl -n spark get pods -o wide
       - uses: actions/setup-python@v5
         with:
@@ -129,6 +136,8 @@ jobs:
           python tests/integration/tester_postgres.py
       - name: Pool analytique (lecture seule, Power BI / Qlik)
         run: python tests/integration/tester_analytique.py
+      - name: Isolation analytique (file d'attente PgBouncer, coupures, autoscaling, latence de l'application)
+        run: python tests/integration/tester_isolation.py
       - name: Sauvegardes et restauration à un instant donné
         run: python tests/integration/tester_restauration.py
       - name: Diagnostic en cas d'échec
