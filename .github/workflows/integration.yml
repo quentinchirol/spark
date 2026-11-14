@@ -134,6 +134,8 @@ jobs:
           echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
           pip install "pyiceberg[pyarrow]" -r python/analyse/requirements.txt
           python tests/integration/tester_postgres.py
+      - name: Accès temps réel (répliques uniquement, jamais le primaire)
+        run: python tests/integration/tester_temps_reel.py
       - name: Pool analytique (lecture seule, Power BI / Qlik)
         run: python tests/integration/tester_analytique.py
       - name: Isolation analytique (file d'attente PgBouncer, coupures, autoscaling, latence de l'application)

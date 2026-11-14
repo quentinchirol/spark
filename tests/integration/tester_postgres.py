@@ -47,6 +47,11 @@ def historique_cron(pod):
                    "ORDER BY start_time DESC LIMIT 5", base="postgres"))
     print(sql(pod, "SELECT current_setting('max_worker_processes'), string_agg(backend_type || ':' || n, ', ') "
                    "FROM (SELECT backend_type, count(*) n FROM pg_stat_activity GROUP BY 1) t", base="postgres"))
+    # journal de PostgreSQL (fichiers CSV de Spilo, pas la sortie du conteneur) : lancement des tâches pg_cron
+    journal = subprocess.run(["kubectl", "-n", "spark", "exec", pod, "-c", "postgres", "--", "sh", "-c",
+                              "cat /home/postgres/pgdata/pgroot/pg_log/*.csv | grep -i -E 'cron|worker' | tail -n 40"],
+                             text=True, capture_output=True, check=False)
+    print(journal.stdout or journal.stderr)
 
 
 def lot(*messages):
@@ -107,8 +112,15 @@ def main():
             historique_cron(pod)
             verifier(False, "la fusion planifiée (pg_cron) a vidé la table chaude")
         verifier(True, "la fusion planifiée (pg_cron) a vidé la table chaude")
-        verifier(any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()),
-                 "modification appliquée à Iceberg, lue par pyiceberg")
+        # un autre moteur peut lire le snapshot précédent pendant un court instant après la fusion (constaté en CI :
+        # pyiceberg 0,2 s après) : on mesure le délai au lieu de lire une seule fois
+        debut = time.monotonic()
+        while not any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()):
+            if time.monotonic() - debut > 30:
+                verifier(False, "modification appliquée à Iceberg, lue par pyiceberg (30 s)")
+            time.sleep(0.5)
+        verifier(True, f"modification appliquée à Iceberg, lue par pyiceberg "
+                       f"({time.monotonic() - debut:.1f} s après la fusion vue par PostgreSQL)")
 
         # --- (US-12) pg_lake entretient lui-même ses tables -----------------------------------------------
         def fichiers():

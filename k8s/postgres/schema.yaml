@@ -1,5 +1,5 @@
 # Initialise la base « lake » du PostgreSQL principal : extensions, accès à Polaris, modèle chaud + froid,
-# rôle de l'application, fusion planifiée (fichiers sql/, ConfigMap lake-sql). Idempotent : relancé à
+# rôles, fusion planifiée, accès temps réel sur les répliques (fichiers sql/, ConfigMap lake-sql). Idempotent : relancé à
 # chaque déploiement (le Job est recréé par infra/gke/deployer.sh).
 apiVersion: batch/v1
 kind: Job

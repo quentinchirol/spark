@@ -250,6 +250,10 @@ principal n'est jamais sollicité. Connexion avec le connecteur PostgreSQL (Dire
 `analyste` : [docs/analytique.md](docs/analytique.md). Depuis un notebook : `python/analyse` (lire dans pandas,
 exporter en CSV, Excel ou Parquet), exemple dans `notebooks/exploration.ipynb`.
 
+**Exceptionnellement, à la seconde près** (suivre un événement critique) : accès personnel et temporaire
+(`python scripts/temps-reel.py accorder <nom> --duree 8h`) aux vues `vue.*` sur une **réplique** du PostgreSQL
+principal ; une connexion au primaire est refusée. [docs/temps-reel.md](docs/temps-reel.md).
+
 ## Stockage et catalogue : MinIO + Polaris
 
 - **MinIO** (`http://minio:9000`) : 4 pods, 1 volume chacun, codage d'effacement. Un pod arrêté ne gêne ni la lecture ni
