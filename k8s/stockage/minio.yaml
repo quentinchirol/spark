@@ -145,13 +145,43 @@ spec:
               until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
                 echo "MinIO pas encore prêt"; sleep 3
               done
-              mc mb --ignore-existing local/warehouse
+              # MinIO répond avant que le cluster soit formé (« Server not initialized yet », constaté en CI :
+              # bucket warehouse jamais créé). Chaque étape est donc réessayée jusqu'à réussir, sinon le Job échoue
+              # et Kubernetes le relance (backoffLimit). Les arguments ne sont jamais affichés (clés S3).
+              reessayer() {
+                etape=$1; shift
+                essai=0
+                until "$@"; do
+                  essai=$((essai + 1))
+                  if [ "$essai" -ge 20 ]; then echo "ECHEC : $etape"; return 1; fi
+                  echo "$etape : nouvel essai ($essai)"; sleep 3
+                done
+              }
+              reessayer "bucket warehouse" mc mb --ignore-existing local/warehouse || exit 1
               # fichiers déposés pour les traitements à la demande (s3://sources/ventes/…, k8s/traitements)
-              mc mb --ignore-existing local/sources
-              mc admin user add local "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
-              mc admin policy attach local readwrite --user "$AWS_ACCESS_KEY_ID" || true
-              mc admin user add local "$TRINO_S3_ACCESS_KEY" "$TRINO_S3_SECRET_KEY"
-              mc admin policy attach local readonly --user "$TRINO_S3_ACCESS_KEY" || true
+              reessayer "bucket sources" mc mb --ignore-existing local/sources || exit 1
+              # Un utilisateur tout juste créé peut être encore inconnu du nœud qui reçoit
+              # l'association de politique (« The specified user does not exist », constaté en CI : spark sans
+              # droits, 403 ensuite). On réessaie jusqu'à voir la politique sur l'utilisateur ; sinon le Job échoue
+              # et Kubernetes le relance (backoffLimit). « attach » échoue aussi si la politique est déjà attachée :
+              # seule la vérification compte. L'image mc n'a pas grep : comparaison par motif du shell.
+              attacher() {
+                essai=0
+                while [ "$essai" -lt 20 ]; do
+                  essai=$((essai + 1))
+                  mc admin policy attach local "$1" --user "$2" >/dev/null 2>&1 || true
+                  # « readwrite » ou « readonly » n'apparaît dans la fiche de l'utilisateur que comme politique
+                  case "$(mc admin user info local "$2" --json 2>/dev/null)" in
+                    *"\"$1"*) echo "politique $1 attachée"; return 0 ;;
+                  esac
+                  echo "politique $1 pas encore attachée (essai $essai), nouvel essai"; sleep 3
+                done
+                echo "ECHEC : politique $1 non attachée"; return 1
+              }
+              reessayer "utilisateur spark" mc admin user add local "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" || exit 1
+              attacher readwrite "$AWS_ACCESS_KEY_ID" || exit 1
+              reessayer "utilisateur trino" mc admin user add local "$TRINO_S3_ACCESS_KEY" "$TRINO_S3_SECRET_KEY" || exit 1
+              attacher readonly "$TRINO_S3_ACCESS_KEY" || exit 1
               echo "bucket et utilisateurs prêts"
           envFrom:
             - secretRef:
