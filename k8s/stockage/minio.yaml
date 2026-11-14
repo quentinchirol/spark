@@ -152,14 +152,16 @@ spec:
               # l'association de politique (« The specified user does not exist », constaté en CI : spark sans
               # droits, 403 ensuite). On réessaie jusqu'à voir la politique sur l'utilisateur ; sinon le Job échoue
               # et Kubernetes le relance (backoffLimit). « attach » échoue aussi si la politique est déjà attachée :
-              # seule la vérification compte.
+              # seule la vérification compte. L'image mc n'a pas grep : comparaison par motif du shell.
               attacher() {
-                for essai in $(seq 1 20); do
+                essai=0
+                while [ "$essai" -lt 20 ]; do
+                  essai=$((essai + 1))
                   mc admin policy attach local "$1" --user "$2" >/dev/null 2>&1 || true
                   # « readwrite » ou « readonly » n'apparaît dans la fiche de l'utilisateur que comme politique
-                  if mc admin user info local "$2" --json 2>/dev/null | grep -q "\"$1"; then
-                    echo "politique $1 attachée"; return 0
-                  fi
+                  case "$(mc admin user info local "$2" --json 2>/dev/null)" in
+                    *"\"$1"*) echo "politique $1 attachée"; return 0 ;;
+                  esac
                   echo "politique $1 pas encore attachée (essai $essai), nouvel essai"; sleep 3
                 done
                 echo "ECHEC : politique $1 non attachée"; return 1
