@@ -37,6 +37,9 @@ configMapGenerator:
       - postgres/sql/02-modele.sql
       - postgres/sql/03-roles.sql
       - postgres/sql/04-planification.sql
+      - postgres/sql/05-temps-reel.sql
+      # incluse par 05-temps-reel.sql (\ir) dans chaque base ; pas jouée seule (le Job ne joue que les *.sql)
+      - postgres/sql/garde-temps-reel.psql
   # script d'initialisation de Polaris (Job polaris-init)
   - name: polaris-init
     files:
