@@ -7,16 +7,21 @@ distant comme Power BI ou Qlik (connecteur PostgreSQL, utilisateur « analyste �
   2. une donnée écrite par l'application sur le PostgreSQL principal est lisible dans le pool en moins de 2 minutes
      (fusion planifiée vers Iceberg, chaque minute) ;
   3. le pool est en lecture seule : écrire, créer une table, contourner la lecture seule : tout est refusé ;
-  4. le rôle analyste a ses limites (statement_timeout 120 s).
+  4. le rôle analyste a ses limites (statement_timeout 120 s) ;
+  5. (US-15) depuis un notebook (python/analyse) : lister les tables lisibles, lire, exporter en CSV, Excel et
+     Parquet, à travers PgBouncer ; les fichiers relus contiennent toutes les lignes.
 
     echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
     python tests/integration/tester_analytique.py
-Dépendances : pip install "pyiceberg[pyarrow]" "psycopg[binary]"
+Dépendances : pip install "pyiceberg[pyarrow]" -r python/analyse/requirements.txt
 """
 import json
 import subprocess
+import sys
+import tempfile
 import time
 import uuid
+from pathlib import Path
 
 import psycopg
 import pyarrow as pa
@@ -121,6 +126,27 @@ def main():
         print("4. Limites du rôle analyste")
         verifier(valeur(conn, "SHOW statement_timeout") == "2min", "requête interrompue au-delà de 120 s")
         conn.close()
+
+        print("5. Notebook : lister, lire, exporter en CSV, Excel et Parquet")
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+        import analyse
+        import pandas as pd
+        import pyarrow.parquet as pq
+        with analyse.connexion(host="localhost", port=PORT_POOL,
+                               password=env("analytique.env")["ANALYTIQUE_MOT_DE_PASSE"]) as notebook:
+            lisibles = {f"{r.schema}.{r.table}" for r in analyse.tables(conn=notebook).itertuples()}
+            verifier({"gold.indicateurs", "app.commandes", "vue.commandes"} <= lisibles,
+                     f"{len(lisibles)} tables et vues lisibles listées")
+            commandes = analyse.lire("SELECT * FROM vue.commandes ORDER BY id", conn=notebook)
+            verifier(len(commandes) > 0, f"lecture dans pandas : {len(commandes)} lignes")
+            dossier = Path(tempfile.mkdtemp())
+            relus = {".csv": lambda f: len(pd.read_csv(f)), ".xlsx": lambda f: len(pd.read_excel(f)),
+                     ".parquet": lambda f: pq.read_table(f).num_rows}
+            for extension, relire in relus.items():
+                fichier = dossier / f"commandes{extension}"
+                ecrites = analyse.exporter("SELECT * FROM vue.commandes ORDER BY id", fichier, conn=notebook)
+                verifier(ecrites == len(commandes) == relire(fichier),
+                         f"export {extension} : {ecrites} lignes, fichier relu complet ({fichier.stat().st_size} octets)")
     finally:
         for t in tunnels:
             t.terminate()

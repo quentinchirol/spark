@@ -132,7 +132,7 @@ jobs:
       - name: Test d'intégration
         run: |
           echo '127.0.0.1 minio' | sudo tee -a /etc/hosts
-          pip install "pyiceberg[pyarrow]" "psycopg[binary]"
+          pip install "pyiceberg[pyarrow]" -r python/analyse/requirements.txt
           python tests/integration/tester_postgres.py
       - name: Pool analytique (lecture seule, Power BI / Qlik)
         run: python tests/integration/tester_analytique.py
