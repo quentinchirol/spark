@@ -55,13 +55,27 @@ passerelle de données locale qui joint le pool.
 
 *Ajouter des données → PostgreSQL* (connecteur ODBC Qlik) : hôte, port `5432`, base `lake`, utilisateur `analyste`.
 
-### Python / notebook
+### Python / notebook (lire, exporter en CSV, Excel, Parquet)
+
+Le module `python/analyse` (exemple : `notebooks/exploration.ipynb`) :
+
+```bash
+pip install -r python/analyse/requirements.txt
+export LAKE_MOT_DE_PASSE=…          # LAKE_HOTE (localhost), LAKE_PORT (5432) si besoin
+```
 
 ```python
-import pandas as pd, psycopg
-with psycopg.connect(host="localhost", dbname="lake", user="analyste", password="…") as conn:
-    df = pd.read_sql("SELECT * FROM gold.ventes_par_jour", conn)
+from analyse import tables, lire, exporter
+tables()                                                         # tables et vues que je peux lire
+df = lire("SELECT * FROM gold.ventes_par_jour WHERE date >= %s", ("2026-11-01",))   # DataFrame pandas
+exporter("SELECT * FROM silver.ventes", "ventes.parquet")        # .csv, .xlsx ou .parquet selon l'extension
 ```
+
+| Format | Écriture | Types |
+|--------|----------|-------|
+| `.csv` | produit par le serveur (`COPY`), écrit au fil de l'eau ; UTF-8, en-tête, séparateur virgule | texte |
+| `.parquet` | par lots de 50 000 lignes (curseur côté serveur), compression zstd | ceux de PostgreSQL : entiers, décimaux exacts, dates, horodatages UTC ; uuid et JSON en texte |
+| `.xlsx` | en mémoire, 1 048 575 lignes au plus (limite d'Excel) | horodatages en UTC, sans fuseau |
 
 ## Beaucoup d'analystes en même temps
 

@@ -247,7 +247,8 @@ derniers snapshots gardés, fichiers orphelins supprimés), en continu par pg_la
 `lake-analytique` : PostgreSQL + pg_lake en **lecture seule**, sans données propres. Il lit directement les tables
 Iceberg du catalogue (gold, silver, bronze, et les données de l'application en moins de 2 minutes) ; le PostgreSQL
 principal n'est jamais sollicité. Connexion avec le connecteur PostgreSQL (DirectQuery), base `lake`, utilisateur
-`analyste` : [docs/analytique.md](docs/analytique.md).
+`analyste` : [docs/analytique.md](docs/analytique.md). Depuis un notebook : `python/analyse` (lire dans pandas,
+exporter en CSV, Excel ou Parquet), exemple dans `notebooks/exploration.ipynb`.
 
 ## Stockage et catalogue : MinIO + Polaris
 
