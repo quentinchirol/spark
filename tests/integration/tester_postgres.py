@@ -107,8 +107,15 @@ def main():
             historique_cron(pod)
             verifier(False, "la fusion planifiée (pg_cron) a vidé la table chaude")
         verifier(True, "la fusion planifiée (pg_cron) a vidé la table chaude")
-        verifier(any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()),
-                 "modification appliquée à Iceberg, lue par pyiceberg")
+        # un autre moteur peut lire le snapshot précédent pendant un court instant après la fusion (constaté en CI :
+        # pyiceberg 0,2 s après) : on mesure le délai au lieu de lire une seule fois
+        debut = time.monotonic()
+        while not any(r["statut"] == "payee" for r in spark.load_table(f"app.{TABLE}").scan().to_arrow().to_pylist()):
+            if time.monotonic() - debut > 30:
+                verifier(False, "modification appliquée à Iceberg, lue par pyiceberg (30 s)")
+            time.sleep(0.5)
+        verifier(True, f"modification appliquée à Iceberg, lue par pyiceberg "
+                       f"({time.monotonic() - debut:.1f} s après la fusion vue par PostgreSQL)")
 
         # --- (US-12) pg_lake entretient lui-même ses tables -----------------------------------------------
         def fichiers():
