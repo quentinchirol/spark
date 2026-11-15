@@ -4,6 +4,10 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: lakehouse
 nodes:
   - role: control-plane
+    # Kubernetes 1.32, l'image par défaut de kind 0.26 (helm/kind-action@v1.12.0 de la CI), figée pour que le
+    # cluster local soit le même ; les images plus récentes (1.35+) refusent aussi les hôtes en cgroup v1
+    # (Docker Desktop sous WSL2)
+    image: kindest/node:v1.32.0@sha256:c48c62eac5da28cdadcf560d1d8616cfa6783b58f0d94cf63ad1bf49600cb027
     # zone simulée : Kafka (rack) et les répartitions par zone exigent ce label, présent sur GKE
     labels:
       topology.kubernetes.io/zone: kind-a
