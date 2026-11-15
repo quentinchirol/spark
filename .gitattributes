@@ -1,0 +1,9 @@
+# Fins de ligne LF pour tout ce qui part dans un conteneur ou un pod. Sous Windows (core.autocrlf=true), git
+# extrait sinon ces fichiers en CRLF : un .sh ne s'exécute plus dans bash et les ConfigMaps construites par
+# kustomize (lancer.sh, spark-defaults.conf, SQL…) diffèrent de celles de la CI (scripts/ci-locale.sh).
+*.sh                    text eol=lf
+k8s/**                  text=auto eol=lf
+image/**                text=auto eol=lf
+tests/integration/**    text=auto eol=lf
+# déjà en CRLF dans le dépôt : laissé tel quel (identique en CI)
+k8s/trino/access-control.properties  -text
