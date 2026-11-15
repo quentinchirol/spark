@@ -15,6 +15,9 @@
 # Prérequis : docker, kind, kubectl, python 3.11+, et le nom « minio » résolu en 127.0.0.1 (voir le README).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Git Bash (Windows) convertit sinon en chemins Windows les arguments qui ressemblent à des chemins Unix
+# (« lake-sauvegardes:/data » de docker, « /CN=… » d'openssl…) ; sans effet ailleurs
+export MSYS_NO_PATHCONV=1
 
 CLUSTER=lakehouse
 CONTEXTE="kind-$CLUSTER"
@@ -44,7 +47,7 @@ done
 PYTHON=$(command -v python3 || command -v python || true)
 [ -n "$PYTHON" ] || { echo "python 3.11+ est introuvable" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker ne répond pas : démarrez Docker Desktop (ou le démon)" >&2; exit 1; }
-if [ "$JOB" != ecriture ] && [ "$("$PYTHON" -c 'import socket
+if [ "$TESTS" = 1 ] && [ "$JOB" != ecriture ] && [ "$("$PYTHON" -c 'import socket
 try: print(socket.gethostbyname("minio"))
 except OSError: pass')" != 127.0.0.1 ]; then
   echo "Le nom « minio » doit pointer vers 127.0.0.1 (Polaris renvoie aux clients l'adresse http://minio:9000) :" >&2
