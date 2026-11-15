@@ -32,6 +32,7 @@ spark/
 ├── .github/workflows/    CI (lint, tests, manifestes, images) ; publication des images (images.yml)
 ├── .devcontainer/        environnement prêt pour GitHub Codespaces
 ├── scripts/dev/          démarrer / arrêter la stack dans un cluster kind local
+├── scripts/ci-locale.sh  rejouer en local (kind) un job d'intégration de la CI
 └── python/               tests et benchmark
     ├── ecrivain/         writers Kafka « app » → PostgreSQL principal (image lakehouse-ecrivain)
     ├── passerelle/       passerelle d'écriture de référence, FastAPI → Kafka (image lakehouse-passerelle)
@@ -70,6 +71,46 @@ Python, Java 21, Docker, kubectl, Helm et kind sont installés. Pour lancer tout
 scripts/dev/demarrer-kind.sh     # crée le cluster kind, construit et charge les images, déploie
 scripts/dev/arreter-kind.sh      # supprime le cluster
 ```
+
+## Rejouer un job d'intégration en local (kind)
+
+Un passage de la CI prend jusqu'à 18 min : reproduisez d'abord en local. `scripts/ci-locale.sh` rejoue sur kind
+les étapes du job de même nom de `.github/workflows/integration.yml` : construction des images, cluster kind,
+secrets générés (`scripts/generer-secrets.sh --si-absents`, jamais affichés), stockage des sauvegardes hors
+cluster, opérateurs, `kubectl apply -k tests/integration/<job>`, mêmes attentes, mêmes tests. Le cluster est
+**gardé** à la fin, que les tests passent ou non, pour relancer un seul test.
+
+```bash
+scripts/ci-locale.sh stockage                  # ou postgres, ecriture, orchestration, evenements
+scripts/ci-locale.sh postgres --recreer        # repart d'un cluster neuf (obligatoire pour changer de job)
+scripts/ci-locale.sh postgres --sans-images    # images déjà chargées dans kind : on ne reconstruit pas
+scripts/ci-locale.sh postgres --sans-tests     # s'arrête une fois tout déployé et prêt
+
+# relancer un seul test sur le cluster gardé (environnement Python .venv-ci, créé par le script)
+.venv-ci/bin/python tests/integration/tester_temps_reel.py          # Windows : .venv-ci/Scripts/python
+scripts/dev/arreter-kind.sh                                         # supprimer le cluster
+```
+
+| Job             | Images construites                       | Tests                                                     |
+|-----------------|------------------------------------------|-----------------------------------------------------------|
+| `stockage`      | aucune                                   | `tester_stockage.py`                                      |
+| `postgres`      | `postgres-lake:18`                       | `tester_postgres.py`, `tester_temps_reel.py`, `tester_analytique.py`, `tester_isolation.py`, `tester_restauration.py` |
+| `ecriture`      | `postgres-lake`, writers, passerelle     | `tester_ecritures.py`, puis charge k6 (200 écritures/s, p99 < 500 ms) |
+| `orchestration` | Spark, `postgres-lake`, Dagster          | `tester_orchestration.py`                                 |
+| `evenements`    | Spark, `postgres-lake`, Dagster          | `tester_evenements.py`                                    |
+
+Prérequis : Docker, kind, kubectl, Python 3.11+ (sous Windows : Git Bash et Docker Desktop, 12 Go de mémoire
+pour `postgres`, `orchestration` et `evenements`). Les tests lisent les fichiers Iceberg via Polaris, qui
+renvoie l'adresse `http://minio:9000` : le nom `minio` doit pointer vers 127.0.0.1 (une fois) :
+
+```bash
+echo '127.0.0.1 minio' | sudo tee -a /etc/hosts                                 # Linux, macOS
+Add-Content $env:windir\System32\drivers\etc\hosts '127.0.0.1 minio'          # Windows, PowerShell administrateur
+```
+
+Le script bascule kubectl sur le contexte `kind-lakehouse` (les tests appellent `kubectl` sans contexte).
+Sous Windows, `.gitattributes` extrait en LF les scripts et tout ce qui part dans un pod (`k8s/`, `image/`,
+`tests/integration/`) : sinon, `git` les extrait en CRLF et les ConfigMaps diffèrent de celles de la CI.
 
 ---
 

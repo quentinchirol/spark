@@ -115,7 +115,8 @@ else
 fi
 
 if [ "$MODE" = "--rotation" ] || [ ! -s trino-tls.pem ] || [ ! -s trino-cert.pem ]; then
-  openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=localhost" \
+  # MSYS_NO_PATHCONV : sous Git Bash (Windows), « /CN=localhost » serait sinon converti en chemin Windows
+  MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:trino,DNS:trino.spark.svc,IP:127.0.0.1" \
     -keyout trino-key.pem -out trino-cert.pem 2>/dev/null
   cat trino-key.pem trino-cert.pem > trino-tls.pem

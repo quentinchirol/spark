@@ -9,6 +9,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-ci/
 
 # --- Résultats du benchmark ------------------------------------------------------------------
 # Les runs courants restent locaux ; archives/ et optimisation/ sont gardés volontairement.
